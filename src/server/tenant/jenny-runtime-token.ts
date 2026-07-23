@@ -8,7 +8,15 @@ interface JennyRuntimeClaims {
   iss: string;
   jti: string;
   workspaceId: string;
+  projectId?: string;
+  agentId?: string;
   services: string[];
+  allowedActions?: string[];
+  blockedActions?: string[];
+  allowedProxies?: string[];
+  blockedProxies?: string[];
+  resources?: Record<string, { defaults: Record<string, string>; locked: string[] }>;
+  credentialEnvelope?: string;
   iat: number;
   exp: number;
 }
@@ -52,14 +60,61 @@ export async function resolveJennyRuntimeToken(
   }
 
   const services = [...new Set(claims.services)];
+  const credentials = claims.credentialEnvelope
+    ? await openCredentialEnvelope(claims.credentialEnvelope, secret, claims.projectId, claims.agentId)
+    : undefined;
+  if (claims.credentialEnvelope && !credentials) {
+    return undefined;
+  }
   return {
     tokenId: claims.jti,
     tenantId: claims.workspaceId,
-    allowedActions: services.map((service) => `${service}.*`),
-    blockedActions: [],
-    allowedProxies: services,
-    blockedProxies: [],
+    allowedActions: claims.allowedActions ?? services.map((service) => `${service}.*`),
+    blockedActions: claims.blockedActions ?? [],
+    allowedProxies: claims.allowedProxies ?? services,
+    blockedProxies: claims.blockedProxies ?? [],
+    resources: claims.resources,
+    credentials,
   };
+}
+
+async function openCredentialEnvelope(
+  envelope: string,
+  secret: string,
+  projectId: string | undefined,
+  agentId: string | undefined,
+): Promise<RuntimeGrant["credentials"] | undefined> {
+  if (!projectId || !agentId) {
+    return undefined;
+  }
+  const [ivPart, tagPart, ciphertextPart, ...extra] = envelope.split(".");
+  if (!ivPart || !tagPart || !ciphertextPart || extra.length > 0) {
+    return undefined;
+  }
+  try {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret)),
+      { name: "AES-GCM" },
+      false,
+      ["decrypt"],
+    );
+    const ciphertext = Buffer.concat([Buffer.from(ciphertextPart, "base64url"), Buffer.from(tagPart, "base64url")]);
+    const plaintext = await crypto.subtle.decrypt(
+      {
+        name: "AES-GCM",
+        iv: Buffer.from(ivPart, "base64url"),
+        additionalData: new TextEncoder().encode(`${projectId}:${agentId}`),
+        tagLength: 128,
+      },
+      key,
+      ciphertext,
+    );
+    const value = JSON.parse(new TextDecoder().decode(plaintext)) as RuntimeGrant["credentials"];
+    return value && typeof value === "object" ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function sign(value: string, secret: string): Promise<string> {

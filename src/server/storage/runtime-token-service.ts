@@ -1,4 +1,5 @@
 import type { TokenActionPolicy } from "../../core/action-policy.ts";
+import type { ResolvedCredential } from "../../core/types.ts";
 
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 
@@ -40,6 +41,13 @@ const tokenPrefix = "oct_";
 export interface RuntimeGrant extends TokenActionPolicy {
   tokenId: string;
   tenantId?: string;
+  resources?: Record<string, RuntimeResourceScope>;
+  credentials?: Record<string, ResolvedCredential>;
+}
+
+export interface RuntimeResourceScope {
+  defaults: Record<string, string>;
+  locked: string[];
 }
 
 export class RuntimeTokenService {

@@ -535,6 +535,8 @@ export class ConnectServer {
         connectionName,
         policy,
         runtimeTokenId: runtimeGrant?.tokenId,
+        runtimeCredentials: runtimeGrant?.credentials,
+        resourceScopes: runtimeGrant?.resources,
       });
       if (!run) {
         return serializeRuntimeFailure({

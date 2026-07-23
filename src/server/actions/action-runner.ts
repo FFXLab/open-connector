@@ -1,10 +1,11 @@
 import type { CatalogStore } from "../../catalog-store.ts";
 import type { ConnectionService, ConnectionSummary, ExecutionConnection } from "../../connection-service.ts";
 import type { ActionPolicyDecision, ActionPolicyService, ActionPolicySnapshot } from "../../core/action-policy.ts";
-import type { ExecutionContext, ExecutionResult, TransitFileWriter } from "../../core/types.ts";
+import type { ExecutionContext, ExecutionResult, ResolvedCredential, TransitFileWriter } from "../../core/types.ts";
 import type { IProviderLoader } from "../../providers/provider-loader.ts";
 import type { Logger } from "../logger.ts";
 import type { IRunLogStore, RunLog, RunLogCaller, RunLogListInput, RunLogPage } from "../storage/runtime-store.ts";
+import type { RuntimeResourceScope } from "../storage/runtime-token-service.ts";
 
 import { ConnectionError } from "../../connection-service.ts";
 import { executeAction as executeProviderAction } from "../../core/execution.ts";
@@ -27,6 +28,8 @@ export interface RunActionInput {
   connectionName?: string;
   policy?: ActionPolicySnapshot;
   runtimeTokenId?: string;
+  runtimeCredentials?: Record<string, ResolvedCredential>;
+  resourceScopes?: Record<string, RuntimeResourceScope>;
 }
 
 export interface ActionRunResult {
@@ -73,13 +76,20 @@ export class ActionRunner {
     const policy: ActionPolicyDecision = (input.policy ?? this.options.actionPolicy?.createSnapshot())?.evaluate(
       action,
     ) ?? { allowed: true, checks: [] };
+    let actionInput = input.input;
     let connection: ExecutionConnection | undefined;
     let result: ExecutionResult;
     if (!policy.allowed) {
       result = { ok: false, error: { code: policy.code, message: policy.message } };
     } else {
       try {
-        connection = await this.options.connections.resolveForExecution(action.service, input.connectionName);
+        const runtimeCredential = input.runtimeCredentials?.[action.service];
+        connection = runtimeCredential
+          ? {
+              getCredential: async (service) => (service === action.service ? runtimeCredential : undefined),
+            }
+          : await this.options.connections.resolveForExecution(action.service, input.connectionName);
+        actionInput = applyResourceScope(input.input, input.resourceScopes?.[action.service]);
         const executor = action.execution.locallyExecutable
           ? await this.options.providerLoader.loadActionExecutor(
               action.service,
@@ -90,7 +100,7 @@ export class ActionRunner {
         result = await executeProviderAction(
           action,
           executor,
-          input.input,
+          actionInput,
           this.createExecutionContext(connection.getCredential),
         );
       } catch (error) {
@@ -119,7 +129,7 @@ export class ActionRunner {
       connectionProfile: connection?.summary?.profile,
       runtimeTokenId: input.runtimeTokenId,
       policy,
-      inputSummary: this.summarizeAuditValue(input.input, logContext),
+      inputSummary: this.summarizeAuditValue(actionInput, logContext),
       outputSummary: result.ok ? this.summarizeAuditValue(result.output, logContext) : undefined,
       ...auditError,
     };
@@ -178,4 +188,25 @@ export class ActionRunner {
       return "[unavailable]";
     }
   }
+}
+
+function applyResourceScope(input: unknown, scope: RuntimeResourceScope | undefined): unknown {
+  if (!scope) {
+    return input;
+  }
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new ConnectionError("connection_invalid", "Scoped action input must be an object.");
+  }
+  const scoped = { ...(input as Record<string, unknown>) };
+  for (const key of scope.locked) {
+    const expected = scope.defaults[key];
+    const provided = scoped[key];
+    if (provided !== undefined && String(provided).toLowerCase() !== expected?.toLowerCase()) {
+      throw new ConnectionError("connection_invalid", `Action access is limited to the current project ${key}.`);
+    }
+    if (expected !== undefined) {
+      scoped[key] = expected;
+    }
+  }
+  return scoped;
 }

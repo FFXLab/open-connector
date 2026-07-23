@@ -319,6 +319,8 @@ async function executeAction(
     connectionName,
     policy,
     runtimeTokenId: options.runtimeGrant?.tokenId,
+    runtimeCredentials: options.runtimeGrant?.credentials,
+    resourceScopes: options.runtimeGrant?.resources,
   });
   if (!run) {
     return errorPayload("unknown_action", `Unknown action: ${actionId}`);

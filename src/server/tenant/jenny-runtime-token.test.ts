@@ -20,9 +20,31 @@ describe("resolveJennyRuntimeToken", () => {
       resolveJennyRuntimeToken(await createToken({ services: [], expired: true }), secret),
     ).resolves.toBeUndefined();
   });
+
+  it("uses explicit Jenny action and proxy policy", async () => {
+    const token = await createToken({
+      services: ["github"],
+      claims: {
+        allowedActions: ["github.get_issue"],
+        blockedActions: ["github.delete_repository"],
+        allowedProxies: [],
+        blockedProxies: ["github"],
+      },
+    });
+    await expect(resolveJennyRuntimeToken(token, secret)).resolves.toMatchObject({
+      allowedActions: ["github.get_issue"],
+      blockedActions: ["github.delete_repository"],
+      allowedProxies: [],
+      blockedProxies: ["github"],
+    });
+  });
 });
 
-async function createToken(input: { services: string[]; expired?: boolean }): Promise<string> {
+async function createToken(input: {
+  services: string[];
+  expired?: boolean;
+  claims?: Record<string, unknown>;
+}): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const payload = Buffer.from(
     JSON.stringify({
@@ -31,6 +53,7 @@ async function createToken(input: { services: string[]; expired?: boolean }): Pr
       jti: "token-1",
       workspaceId: "workspace-1",
       services: input.services,
+      ...input.claims,
       iat: now - 60,
       exp: input.expired ? now - 1 : now + 600,
     }),

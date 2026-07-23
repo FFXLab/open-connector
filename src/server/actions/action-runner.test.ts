@@ -148,6 +148,58 @@ describe("ActionRunner", () => {
       },
     });
   });
+
+  it("uses runtime credentials and locks scoped action input", async () => {
+    const runs = new MemoryRunLogStore();
+    const { logger } = createTestLogger();
+    const executor = vi.fn<ActionExecutor>(async (input, context) => ({
+      ok: true,
+      output: { input, credential: await context.getCredential("example") },
+    }));
+    const runner = createRunner({
+      runs,
+      logger,
+      providerLoader: new TestProviderLoader(executor),
+    });
+    const credential: ResolvedCredential = {
+      authType: "api_key",
+      apiKey: "secret",
+      values: { apiKey: "secret" },
+      profile: { accountId: "1", displayName: "Runtime", grantedScopes: [] },
+      metadata: {},
+    };
+
+    const run = await runner.run({
+      actionId: "example.echo",
+      input: { message: "hello" },
+      caller: "mcp",
+      runtimeCredentials: { example: credential },
+      resourceScopes: {
+        example: { defaults: { owner: "FFXLab", repo: "Jenny" }, locked: ["owner", "repo"] },
+      },
+    });
+
+    expect(run?.result).toMatchObject({
+      ok: true,
+      output: { input: { message: "hello", owner: "FFXLab", repo: "Jenny" } },
+    });
+    expect(executor).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a runtime action targeting another resource", async () => {
+    const runs = new MemoryRunLogStore();
+    const { logger } = createTestLogger();
+    const runner = createRunner({ runs, logger });
+    const run = await runner.run({
+      actionId: "example.echo",
+      input: { owner: "someone-else", repo: "Jenny" },
+      caller: "mcp",
+      resourceScopes: {
+        example: { defaults: { owner: "FFXLab", repo: "Jenny" }, locked: ["owner", "repo"] },
+      },
+    });
+    expect(run?.result).toMatchObject({ ok: false, error: { code: "connection_invalid" } });
+  });
 });
 
 function createRunner(options: {
