@@ -3,6 +3,7 @@ import type { ActionPolicySnapshot } from "./core/action-policy.ts";
 import type { ActionDefinition, ActionExecutor, ProviderDefinition, ResolvedCredential } from "./core/types.ts";
 import type { IProviderLoader } from "./providers/provider-loader.ts";
 import type { IRunLogStore, RunLog, RunLogPage } from "./server/storage/runtime-store.ts";
+import type { RuntimeGrant } from "./server/storage/runtime-token-service.ts";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -31,13 +32,26 @@ const echoAction: ActionDefinition = {
   outputSchema: { type: "object" },
 };
 
+const scopedAction: ActionDefinition = {
+  ...echoAction,
+  id: "example.scoped",
+  name: "scoped",
+  description: "Echo a project-scoped resource.",
+  inputSchema: {
+    type: "object",
+    properties: { owner: { type: "string" } },
+    required: ["owner"],
+    additionalProperties: false,
+  },
+};
+
 const exampleProvider: ProviderDefinition = {
   service: "example",
   displayName: "Example",
   categories: ["Developer Tools"],
   authTypes: ["no_auth"],
   auth: [{ type: "no_auth" }],
-  actions: [echoAction],
+  actions: [echoAction, scopedAction],
 };
 
 const getAccountAction: ActionDefinition = {
@@ -462,17 +476,63 @@ describe("MCP server", () => {
       },
     );
   });
+
+  it("exposes runtime credentials and project-scoped defaults through discovery and execution", async () => {
+    const runtimeGrant: RuntimeGrant = {
+      tokenId: "token-runtime",
+      allowedActions: ["example.scoped"],
+      blockedActions: [],
+      credentials: { example: { authType: "no_auth" } },
+      resources: { example: { defaults: { owner: "current-project" }, locked: ["owner"] } },
+    };
+    await withMcpClient(
+      async (client) => {
+        const connections = await client.callTool({
+          name: "list_connections",
+          arguments: { service: "example" },
+        });
+        expect(connections.structuredContent).toMatchObject({
+          ok: true,
+          data: [{ id: "runtime:example", service: "example", default: true }],
+        });
+
+        const guide = await client.callTool({
+          name: "get_action_guide",
+          arguments: { actionId: "example.scoped" },
+        });
+        expect(guide.structuredContent).toMatchObject({
+          ok: true,
+          data: {
+            capability: { connection: { id: "runtime:example" } },
+            markdown: expect.stringContaining("Provided automatically by the current project"),
+          },
+        });
+        expect(JSON.stringify(guide.structuredContent)).not.toContain("| `owner` | Yes |");
+
+        const execution = await client.callTool({
+          name: "execute_action",
+          arguments: { actionId: "example.scoped", input: {} },
+        });
+        expect(execution.structuredContent).toMatchObject({
+          ok: true,
+          data: { owner: "current-project" },
+          connection: { id: "runtime:example" },
+        });
+      },
+      { runtimeGrant },
+    );
+  });
 });
 
 async function withMcpClient(
   run: (client: Client) => Promise<void>,
   policy: {
     getPolicySnapshot?(): Promise<ActionPolicySnapshot>;
-    runtimeGrant?: { tokenId: string; allowedActions: string[]; blockedActions: string[] };
+    runtimeGrant?: RuntimeGrant;
   } = {},
 ): Promise<void> {
   const catalog = createCatalogStore([exampleProvider], {
-    executableActionIds: ["example.echo"],
+    executableActionIds: ["example.echo", "example.scoped"],
   });
   const providerLoader = new EchoProviderLoader();
   const connections = new ConnectionService({

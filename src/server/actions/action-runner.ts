@@ -86,6 +86,7 @@ export class ActionRunner {
         const runtimeCredential = input.runtimeCredentials?.[action.service];
         connection = runtimeCredential
           ? {
+              summary: runtimeConnectionSummary(action.service, runtimeCredential),
               getCredential: async (service) => (service === action.service ? runtimeCredential : undefined),
             }
           : await this.options.connections.resolveForExecution(action.service, input.connectionName);
@@ -188,6 +189,22 @@ export class ActionRunner {
       return "[unavailable]";
     }
   }
+}
+
+function runtimeConnectionSummary(service: string, credential: ResolvedCredential): ConnectionSummary {
+  return {
+    id: `runtime:${service}`,
+    service,
+    connectionName: "default",
+    authType: credential.authType,
+    configured: true,
+    virtual: false,
+    default: true,
+    profile:
+      credential.authType === "no_auth"
+        ? { accountId: "runtime", displayName: "Runtime access", grantedScopes: [] }
+        : credential.profile,
+  };
 }
 
 function applyResourceScope(input: unknown, scope: RuntimeResourceScope | undefined): unknown {

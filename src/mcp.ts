@@ -191,10 +191,20 @@ export function createMcpServer(options: IMcpServerOptions): McpServer {
 
 async function listConnections(options: IMcpServerOptions, service: string | undefined): Promise<ToolPayload> {
   try {
-    const connections = service
+    const storedConnections = service
       ? await options.connections.listConnectionsByService(service)
       : await options.connections.listConnections();
-    return successPayload(connections.filter((connection) => !connection.virtual).map(serializeConnection));
+    const connections = storedConnections.filter((connection) => !connection.virtual);
+    for (const [runtimeService, credential] of Object.entries(options.runtimeGrant?.credentials ?? {})) {
+      if (service && runtimeService !== service) continue;
+      const runtimeConnection = runtimeConnectionSummary(runtimeService, credential);
+      const existingIndex = connections.findIndex(
+        (connection) => connection.service === runtimeService && connection.default,
+      );
+      if (existingIndex >= 0) connections.splice(existingIndex, 1, runtimeConnection);
+      else connections.push(runtimeConnection);
+    }
+    return successPayload(connections.map(serializeConnection));
   } catch (error) {
     return connectionErrorPayload(error);
   }
@@ -253,7 +263,7 @@ async function searchActions(
     name: action.name,
     description: action.description,
     capability: await describeActionCapability(options, action, undefined, policy),
-    inputSummary: summarizeInputSchema(action.inputSchema),
+    inputSummary: summarizeInputSchema(action.inputSchema, options.runtimeGrant?.resources?.[action.service]),
   }));
 
   return successPayload(await Promise.all(actions));
@@ -279,7 +289,7 @@ async function getActionGuide(
     return successPayload({
       capability: await describeActionCapability(options, action, connectionName, policy),
       markdown: renderActionMarkdown(
-        action,
+        applyResourceScopeToActionGuide(action, options.runtimeGrant?.resources?.[action.service]),
         await describeActionMarkdownContext(options, action, connectionName, policy),
       ),
     });
@@ -343,7 +353,10 @@ async function executeAction(
   };
 }
 
-function summarizeInputSchema(schema: JsonSchema): unknown {
+function summarizeInputSchema(
+  schema: JsonSchema,
+  resourceScope?: { defaults: Record<string, string>; locked: string[] },
+): unknown {
   const properties =
     schema.properties && typeof schema.properties === "object" ? (schema.properties as Record<string, JsonSchema>) : {};
   const required = new Set(
@@ -352,9 +365,13 @@ function summarizeInputSchema(schema: JsonSchema): unknown {
 
   return Object.entries(properties).map(([name, property]) => ({
     name,
-    required: required.has(name),
+    required: required.has(name) && !resourceScope?.locked.includes(name),
     type: describeSchemaType(property),
-    description: typeof property.description === "string" ? property.description : "",
+    description: resourceScope?.locked.includes(name)
+      ? `Provided automatically by the current project (${resourceScope.defaults[name] ?? "scoped"}). Omit this field.`
+      : typeof property.description === "string"
+        ? property.description
+        : "",
   }));
 }
 
@@ -409,11 +426,66 @@ async function getSelectedConnectionSummary(
   service: string,
   connectionName: string | undefined,
 ): Promise<ConnectionSummary | undefined> {
+  const runtimeCredential = options.runtimeGrant?.credentials?.[service];
+  if (runtimeCredential) {
+    if (connectionName && connectionName !== "default") {
+      throw new ConnectionError("connection_not_found", `${service} connection not found: ${connectionName}.`);
+    }
+    return runtimeConnectionSummary(service, runtimeCredential);
+  }
   const connection = await options.connections.getConnectionSummary(service, connectionName);
   if (connectionName && connection?.virtual && !connection.default) {
     throw new ConnectionError("connection_not_found", `${service} connection not found: ${connection.connectionName}.`);
   }
   return connection;
+}
+
+function runtimeConnectionSummary(
+  service: string,
+  credential: NonNullable<RuntimeGrant["credentials"]>[string],
+): ConnectionSummary {
+  return {
+    id: `runtime:${service}`,
+    service,
+    connectionName: "default",
+    authType: credential.authType,
+    configured: true,
+    virtual: false,
+    default: true,
+    profile:
+      credential.authType === "no_auth"
+        ? { accountId: "runtime", displayName: "Runtime access", grantedScopes: [] }
+        : credential.profile,
+  };
+}
+
+function applyResourceScopeToActionGuide(
+  action: RuntimeActionDefinition,
+  scope?: { defaults: Record<string, string>; locked: string[] },
+): RuntimeActionDefinition {
+  if (!scope || scope.locked.length === 0) return action;
+  const properties =
+    action.inputSchema.properties && typeof action.inputSchema.properties === "object"
+      ? { ...(action.inputSchema.properties as Record<string, JsonSchema>) }
+      : undefined;
+  if (properties) {
+    for (const name of scope.locked) {
+      if (!properties[name]) continue;
+      properties[name] = {
+        ...properties[name],
+        description: `Provided automatically by the current project (${scope.defaults[name] ?? "scoped"}). Omit this field.`,
+      };
+    }
+  }
+  const required = Array.isArray(action.inputSchema.required)
+    ? action.inputSchema.required.filter(
+        (name): name is string => typeof name === "string" && !scope.locked.includes(name),
+      )
+    : action.inputSchema.required;
+  return {
+    ...action,
+    inputSchema: { ...action.inputSchema, ...(properties ? { properties } : {}), required },
+  };
 }
 
 function describeSchemaType(schema: JsonSchema | undefined): string {
