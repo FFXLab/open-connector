@@ -6,6 +6,7 @@ import type { ITransitFileService } from "./files/transit-file-store.ts";
 import type { Logger } from "./logger.ts";
 import type { ISecretCodec } from "./secrets/secret-codec-core.ts";
 import type { RuntimeDatabase } from "./storage/runtime-database.ts";
+import type { TenantContext } from "./tenant/tenant-context.ts";
 import type { Hono } from "hono";
 
 import { ConnectionService } from "../connection-service.ts";
@@ -15,6 +16,7 @@ import { OAuthFlowService } from "../oauth/oauth-flow-service.ts";
 import { ActionRunner } from "./actions/action-runner.ts";
 import { ConnectServer } from "./connect-server.ts";
 import { RuntimeTokenService } from "./storage/runtime-token-service.ts";
+import { TenantConnectionStore } from "./tenant/tenant-connection-store.ts";
 
 export interface ConnectAppOptions {
   catalog: CatalogStore;
@@ -26,10 +28,12 @@ export interface ConnectAppOptions {
   adminToken?: string;
   runtimeToken?: string;
   verifyRuntimeJwt?: RuntimeJwtVerifier;
+  resolveRuntimeToken?(token: string): Promise<import("./storage/runtime-token-service.ts").RuntimeGrant | undefined>;
   actionPolicy?: ActionPolicyService;
   registerStaticRoutes?: (app: Hono) => void;
   logger?: Logger;
   computeRuntimeAuthConfigured?: boolean;
+  tenantContext?: TenantContext;
 }
 
 export interface ConnectApp {
@@ -49,7 +53,9 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
     catalog: options.catalog,
     oauthCredentials: new OAuthCredentialRefreshService(oauthClientConfigs),
     providerLoader: options.providerLoader,
-    store: options.runtimeDatabase.connectionStore,
+    store: options.tenantContext
+      ? new TenantConnectionStore(options.runtimeDatabase.connectionStore, options.tenantContext)
+      : options.runtimeDatabase.connectionStore,
     logger: options.logger,
   });
   const actions = new ActionRunner({
@@ -72,6 +78,7 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
         clientConfigs: oauthClientConfigs,
         connections,
         states: options.runtimeDatabase.oauthStateStore,
+        tenantContext: options.tenantContext,
       }),
       actions,
       idempotency: options.runtimeDatabase.idempotencyStore,
@@ -82,8 +89,9 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
       auth: {
         adminToken: options.adminToken,
         runtimeToken: options.runtimeToken,
-        hasRuntimeTokens: hasStoredRuntimeTokens,
-        resolveRuntimeToken: (token) => runtimeTokens.resolveToken(token),
+        hasRuntimeTokens: async () => Boolean(options.resolveRuntimeToken) || (await hasStoredRuntimeTokens()),
+        resolveRuntimeToken: async (token) =>
+          (await options.resolveRuntimeToken?.(token)) ?? (await runtimeTokens.resolveToken(token)),
         verifyRuntimeJwt: options.verifyRuntimeJwt,
       },
       actionPolicy: options.actionPolicy,

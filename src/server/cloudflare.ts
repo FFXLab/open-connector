@@ -4,6 +4,7 @@ import type { CloudflareEnv } from "./cloudflare/cloudflare-env.ts";
 import type { ConnectApp } from "./connect-app.ts";
 import type { Logger } from "./logger.ts";
 import type { ISecretCodec } from "./secrets/secret-codec-core.ts";
+import type { TenantContext } from "./tenant/tenant-context.ts";
 
 import { ActionPolicyService, parseActionPolicyList } from "../core/action-policy.ts";
 import { parsePrivateNetworkAccessFlag, setPrivateNetworkAccessAllowed } from "../core/request.ts";
@@ -18,6 +19,7 @@ import { R2TransitFileService } from "./files/r2-transit-files.ts";
 import { createWorkerSecretCodec } from "./secrets/worker-secret-codec.ts";
 import { D1RuntimeDatabase } from "./storage/d1-runtime-store.ts";
 import { DEFAULT_RUN_LIMIT } from "./storage/runtime-store.ts";
+import { resolveJennyRuntimeToken } from "./tenant/jenny-runtime-token.ts";
 
 interface CloudflareExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
@@ -26,18 +28,15 @@ interface CloudflareExecutionContext {
 
 let catalogPromise: Promise<CatalogStore> | undefined;
 let cachedSecretCodec: { key: string; codec: Promise<ISecretCodec> } | undefined;
-let cachedApp: { key: string; app: Promise<ConnectApp> } | undefined;
 
 export default {
   async fetch(request: Request, env: CloudflareEnv, _ctx: CloudflareExecutionContext): Promise<Response> {
     setPrivateNetworkAccessAllowed(parsePrivateNetworkAccessFlag(env.OOMOL_CONNECT_ALLOW_PRIVATE_NETWORK));
     const publicOrigin = resolvePublicOrigin(request, env);
-    const cacheKey = createCacheKey(env, publicOrigin);
-    if (!cachedApp || cachedApp.key !== cacheKey) {
-      cachedApp = { key: cacheKey, app: createCloudflareApp(env, publicOrigin) };
-    }
-
-    const { app } = await cachedApp.app;
+    const tenantContext: TenantContext = {
+      tenantId: request.headers.get("x-jenny-connector-tenant")?.trim() || undefined,
+    };
+    const { app } = await createCloudflareApp(env, publicOrigin, tenantContext);
     const response = await app.fetch(request, env);
     if (response.status === 404 && env.ASSETS && shouldServeAsset(request)) {
       return env.ASSETS.fetch(request);
@@ -47,7 +46,11 @@ export default {
   },
 };
 
-async function createCloudflareApp(env: CloudflareEnv, publicOrigin: string): Promise<ConnectApp> {
+async function createCloudflareApp(
+  env: CloudflareEnv,
+  publicOrigin: string,
+  tenantContext: TenantContext,
+): Promise<ConnectApp> {
   const assets = env.ASSETS;
   if (!assets) {
     throw new Error("Cloudflare ASSETS binding is required to load the catalog");
@@ -80,6 +83,14 @@ async function createCloudflareApp(env: CloudflareEnv, publicOrigin: string): Pr
     secretCodec,
     adminToken: env.OOMOL_CONNECT_ADMIN_TOKEN,
     runtimeToken: env.OOMOL_CONNECT_RUNTIME_TOKEN,
+    resolveRuntimeToken: async (token) => {
+      const grant = await resolveJennyRuntimeToken(token, env.JENNY_CONNECTOR_TOKEN_SECRET);
+      if (grant?.tenantId) {
+        tenantContext.tenantId = grant.tenantId;
+      }
+      return grant;
+    },
+    tenantContext,
     actionPolicy: new ActionPolicyService({
       allowedActions: parseActionPolicyList(env.OOMOL_CONNECT_ALLOWED_ACTIONS),
       blockedActions: parseActionPolicyList(env.OOMOL_CONNECT_BLOCKED_ACTIONS),
@@ -122,22 +133,6 @@ function createSecretCodec(encryptionKey: string | undefined): Promise<ISecretCo
     cachedSecretCodec = { key, codec: createWorkerSecretCodec(encryptionKey) };
   }
   return cachedSecretCodec.codec;
-}
-
-function createCacheKey(env: CloudflareEnv, publicOrigin: string): string {
-  return JSON.stringify({
-    publicOrigin,
-    adminToken: env.OOMOL_CONNECT_ADMIN_TOKEN ?? "",
-    runtimeToken: env.OOMOL_CONNECT_RUNTIME_TOKEN ?? "",
-    encryptionKey: env.OOMOL_CONNECT_ENCRYPTION_KEY ?? "",
-    allowedActions: env.OOMOL_CONNECT_ALLOWED_ACTIONS ?? "",
-    blockedActions: env.OOMOL_CONNECT_BLOCKED_ACTIONS ?? "",
-    allowedProxies: env.OOMOL_CONNECT_ALLOWED_PROXIES ?? "",
-    blockedProxies: env.OOMOL_CONNECT_BLOCKED_PROXIES ?? "",
-    transitFileTtlSeconds: env.OOMOL_CONNECT_TRANSIT_FILE_TTL_SECONDS ?? "",
-    transitFileMaxBytes: env.OOMOL_CONNECT_TRANSIT_FILE_MAX_BYTES ?? "",
-    runLimit: env.OOMOL_CONNECT_RUN_LIMIT ?? "",
-  });
 }
 
 function shouldServeAsset(request: Request): boolean {

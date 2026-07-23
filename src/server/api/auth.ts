@@ -71,6 +71,15 @@ export function createLocalAuthMiddleware(options: LocalAuthOptions): Middleware
       return;
     }
 
+    if (
+      canUseRuntimeAuth(context.req.path) &&
+      readBearerToken(context) &&
+      (await hasValidToken(context, options, "runtime"))
+    ) {
+      await next();
+      return;
+    }
+
     return jsonError(context, 401, "unauthorized", "A valid local bearer token is required.");
   };
 }
@@ -227,6 +236,10 @@ function readAuthScope(path: string): AuthScope {
 
 function canUseAdminAuth(path: string, method: string): boolean {
   return method === "POST" && /^\/v1\/actions\/[^/]+$/.test(path);
+}
+
+function canUseRuntimeAuth(path: string): boolean {
+  return path === "/api/files" || path.startsWith("/api/files/");
 }
 
 function tokenForScope(options: LocalAuthOptions, scope: AuthScope): string | undefined {

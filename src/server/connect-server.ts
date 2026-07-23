@@ -455,7 +455,8 @@ export class ConnectServer {
     }
 
     const now = new Date();
-    const keyHash = hashIdempotencyKey(idempotencyKey.key);
+    const tenantId = runtimeGrant?.tenantId;
+    const keyHash = hashIdempotencyKey(tenantId ? `${tenantId}:${idempotencyKey.key}` : idempotencyKey.key);
     let requestHash: string;
     try {
       requestHash = hashActionRequest({

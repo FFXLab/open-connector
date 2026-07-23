@@ -1,4 +1,5 @@
 import type { ConnectionService } from "../connection-service.ts";
+import type { TenantContext } from "../server/tenant/tenant-context.ts";
 import type { OAuthClientConfigService } from "./oauth-client-config-service.ts";
 
 import { createHash, randomBytes } from "node:crypto";
@@ -31,6 +32,7 @@ export type OAuthAuthorizationState = {
   state: string;
   createdAt: string;
   pkceCodeVerifier?: string;
+  tenantId?: string;
 };
 
 /**
@@ -49,17 +51,20 @@ export class OAuthFlowService {
   private readonly connections: ConnectionService;
   private readonly states: IOAuthStateStore;
   private readonly stateMaxAgeMs: number;
+  private readonly tenantContext?: TenantContext;
 
   constructor(input: {
     clientConfigs: OAuthClientConfigService;
     connections: ConnectionService;
     states: IOAuthStateStore;
     stateMaxAgeMs?: number;
+    tenantContext?: TenantContext;
   }) {
     this.clientConfigs = input.clientConfigs;
     this.connections = input.connections;
     this.states = input.states;
     this.stateMaxAgeMs = input.stateMaxAgeMs ?? 15 * 60 * 1000;
+    this.tenantContext = input.tenantContext;
   }
 
   async startAuthorization(input: OAuthAuthorizationStartInput): Promise<OAuthAuthorizationStart> {
@@ -79,6 +84,7 @@ export class OAuthFlowService {
       state,
       createdAt: new Date().toISOString(),
       pkceCodeVerifier,
+      tenantId: this.tenantContext?.tenantId,
     });
 
     const authorizationUrl = new URL(this.clientConfigs.resolveEndpointUrl(service, auth.authorizationUrl, config));
@@ -118,6 +124,9 @@ export class OAuthFlowService {
     }
     if (isExpiredOAuthState(pending, this.stateMaxAgeMs)) {
       throw new OAuthFlowError("invalid_oauth_state", "OAuth state is missing or expired.");
+    }
+    if (this.tenantContext && pending.tenantId) {
+      this.tenantContext.tenantId = pending.tenantId;
     }
 
     const auth = this.clientConfigs.getOAuthDefinition(pending.service);

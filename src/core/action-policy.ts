@@ -29,6 +29,8 @@ export interface PolicyRules {
 export interface TokenActionPolicy {
   allowedActions: string[];
   blockedActions: string[];
+  allowedProxies?: string[];
+  blockedProxies?: string[];
 }
 
 export interface RuntimePolicyState {
@@ -75,10 +77,12 @@ export class ActionPolicySnapshot {
       const tokenRules = immutablePolicyRules({
         allowedActions: token.allowedActions,
         blockedActions: token.blockedActions,
-        allowedProxies: [],
-        blockedProxies: [],
+        allowedProxies: token.allowedProxies ?? [],
+        blockedProxies: token.blockedProxies ?? [],
       });
-      this.layers.push(compileLayer("token", tokenRules));
+      const tokenLayer = compileLayer("token", tokenRules);
+      this.layers.push(tokenLayer);
+      this.proxyLayers.push(tokenLayer);
     }
   }
 

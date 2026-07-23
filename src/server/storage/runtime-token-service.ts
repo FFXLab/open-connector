@@ -39,6 +39,7 @@ const tokenPrefix = "oct_";
 
 export interface RuntimeGrant extends TokenActionPolicy {
   tokenId: string;
+  tenantId?: string;
 }
 
 export class RuntimeTokenService {
