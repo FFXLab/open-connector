@@ -504,13 +504,53 @@ describe("MCP server", () => {
       },
     );
   });
+
+  it("enforces runtime-token action input constraints through MCP", async () => {
+    await withMcpClient(
+      async (client) => {
+        const denied = await client.callTool({
+          name: "execute_action",
+          arguments: {
+            actionId: "example.echo",
+            input: { message: "other" },
+          },
+        });
+        expect(denied.structuredContent).toMatchObject({
+          ok: false,
+          error: { code: "action_input_not_allowed" },
+        });
+
+        const allowed = await client.callTool({
+          name: "execute_action",
+          arguments: {
+            actionId: "example.echo",
+            input: { message: "expected" },
+          },
+        });
+        expect(allowed.structuredContent).toMatchObject({ ok: true });
+      },
+      {
+        runtimeGrant: {
+          tokenId: "token-input-scope",
+          allowedActions: ["example.*"],
+          blockedActions: [],
+          actionInputConstraints: { "example.*": { message: "expected" } },
+        },
+      },
+    );
+  });
 });
 
 async function withMcpClient(
   run: (client: Client) => Promise<void>,
   policy: {
     getPolicySnapshot?(): Promise<ActionPolicySnapshot>;
-    runtimeGrant?: { tokenId: string; allowedActions: string[]; blockedActions: string[] };
+    runtimeGrant?: {
+      tokenId: string;
+      allowedActions: string[];
+      blockedActions: string[];
+      actionInputConstraints?: Record<string, Record<string, string | number | boolean | null>>;
+    };
   } = {},
 ): Promise<void> {
   const catalog = createCatalogStore([exampleProvider], {

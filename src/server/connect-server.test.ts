@@ -1234,6 +1234,40 @@ describe("ConnectServer", () => {
     await expect(bypass.json()).resolves.toMatchObject({ errorCode: "connection_not_allowed" });
   });
 
+  it("enforces stored token action input constraints through HTTP", async () => {
+    const runtimeTokens = new RuntimeTokenService(new MemoryRuntimeTokenStore());
+    const app = createTestServer([{ ...apiKeyProvider, actions: [echoAction] }], {
+      runtimeTokens,
+      providerLoader: new EchoProviderLoader(),
+    }).createApp();
+    const created = await app.request("/api/runtime-tokens", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Project input scope",
+        allowedActions: ["example.*"],
+        blockedActions: [],
+        actionInputConstraints: { "example.*": { message: "expected" } },
+      }),
+    });
+    const { token } = (await created.json()) as { token: string };
+
+    const denied = await app.request("/v1/actions/example.echo", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ input: { message: "other" } }),
+    });
+    expect(denied.status).toBe(400);
+    await expect(denied.json()).resolves.toMatchObject({ errorCode: "action_input_not_allowed" });
+
+    const allowed = await app.request("/v1/actions/example.echo", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ input: { message: "expected" } }),
+    });
+    expect(allowed.status).toBe(200);
+  });
+
   it("reads and replaces Runtime policy without changing deployment rules", async () => {
     const runtimePolicyStore = new MemoryRuntimePolicyStore();
     const app = createTestServer([apiKeyProvider], {
