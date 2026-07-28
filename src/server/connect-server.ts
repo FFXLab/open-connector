@@ -891,8 +891,12 @@ export class ConnectServer {
     if (!name) {
       return jsonError(context, 400, "invalid_input", "name is required.");
     }
+    const expiresAt = optionalString(body.expiresAt);
+    if (expiresAt && (!Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= Date.now())) {
+      return jsonError(context, 400, "invalid_input", "expiresAt must be a valid future timestamp.");
+    }
 
-    const created = await this.options.runtimeTokens.createToken(name, readTokenActionPolicy(body, true));
+    const created = await this.options.runtimeTokens.createToken(name, readTokenActionPolicy(body, true), expiresAt);
     return context.json({
       token: created.token,
       record: {
@@ -902,6 +906,7 @@ export class ConnectServer {
         blockedActions: created.record.blockedActions,
         allowedConnections: created.record.allowedConnections,
         createdAt: created.record.createdAt,
+        expiresAt: created.record.expiresAt,
       },
     });
   }
