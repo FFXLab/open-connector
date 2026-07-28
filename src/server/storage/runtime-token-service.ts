@@ -9,6 +9,7 @@ export interface RuntimeTokenRecord {
   allowedActions: string[];
   blockedActions: string[];
   allowedConnections?: Record<string, string | null>;
+  actionInputConstraints?: Record<string, Record<string, string | number | boolean | null>>;
   createdAt: string;
   expiresAt?: string;
   lastUsedAt?: string;
@@ -20,6 +21,7 @@ export interface RuntimeTokenSummary {
   allowedActions: string[];
   blockedActions: string[];
   allowedConnections?: Record<string, string | null>;
+  actionInputConstraints?: Record<string, Record<string, string | number | boolean | null>>;
   createdAt: string;
   expiresAt?: string;
   lastUsedAt?: string;
@@ -54,7 +56,12 @@ export class RuntimeTokenService {
 
   async createToken(
     name: string,
-    policy: TokenActionPolicy = { allowedActions: [], blockedActions: [], allowedConnections: {} },
+    policy: TokenActionPolicy = {
+      allowedActions: [],
+      blockedActions: [],
+      allowedConnections: {},
+      actionInputConstraints: {},
+    },
     expiresAt?: string,
   ): Promise<RuntimeTokenCreation> {
     const token = `${tokenPrefix}${randomBytes(32).toString("base64url")}`;
@@ -66,6 +73,7 @@ export class RuntimeTokenService {
       allowedActions: policy.allowedActions,
       blockedActions: policy.blockedActions,
       allowedConnections: policy.allowedConnections ?? {},
+      actionInputConstraints: policy.actionInputConstraints ?? {},
       createdAt: now,
       expiresAt: normalizeFutureExpiry(expiresAt, now),
     };
@@ -105,6 +113,7 @@ export class RuntimeTokenService {
       allowedActions: matched.allowedActions,
       blockedActions: matched.blockedActions,
       allowedConnections: matched.allowedConnections ?? {},
+      actionInputConstraints: matched.actionInputConstraints ?? {},
     };
   }
 
@@ -124,6 +133,7 @@ export function summarizeRuntimeToken(record: RuntimeTokenRecord): RuntimeTokenS
     allowedActions: record.allowedActions,
     blockedActions: record.blockedActions,
     allowedConnections: record.allowedConnections ?? {},
+    actionInputConstraints: record.actionInputConstraints ?? {},
     createdAt: record.createdAt,
     expiresAt: record.expiresAt,
     lastUsedAt: record.lastUsedAt,

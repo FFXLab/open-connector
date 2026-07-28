@@ -27,6 +27,7 @@ export interface RunActionInput {
   connectionName?: string;
   policy?: ActionPolicySnapshot;
   runtimeTokenId?: string;
+  actionInputConstraints?: Record<string, Record<string, string | number | boolean | null>>;
 }
 
 export interface ActionRunResult {
@@ -75,8 +76,18 @@ export class ActionRunner {
     ) ?? { allowed: true, checks: [] };
     let connection: ExecutionConnection | undefined;
     let result: ExecutionResult;
+    const inputConstraintFailure = evaluateActionInputConstraints(
+      action.id,
+      input.input,
+      input.actionInputConstraints,
+    );
     if (!policy.allowed) {
       result = { ok: false, error: { code: policy.code, message: policy.message } };
+    } else if (inputConstraintFailure) {
+      result = {
+        ok: false,
+        error: { code: "action_input_not_allowed", message: inputConstraintFailure },
+      };
     } else {
       try {
         connection = await this.options.connections.resolveForExecution(action.service, input.connectionName);
@@ -178,4 +189,28 @@ export class ActionRunner {
       return "[unavailable]";
     }
   }
+}
+
+export function evaluateActionInputConstraints(
+  actionId: string,
+  input: unknown,
+  constraints: Record<string, Record<string, string | number | boolean | null>> | undefined,
+): string | null {
+  if (!constraints || Object.keys(constraints).length === 0) return null;
+  const matching = Object.entries(constraints).filter(([rule]) =>
+    rule === "*" ? true : rule.endsWith(".*") ? actionId.startsWith(rule.slice(0, -1)) : actionId === rule,
+  );
+  if (matching.length === 0) return null;
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return `${actionId} input does not satisfy the runtime token constraints.`;
+  }
+  const values = input as Record<string, unknown>;
+  for (const [, fields] of matching) {
+    for (const [field, expected] of Object.entries(fields)) {
+      if (values[field] !== expected) {
+        return `${actionId} input field ${field} is restricted by the runtime token.`;
+      }
+    }
+  }
+  return null;
 }

@@ -128,6 +128,7 @@ describe("D1RuntimeDatabase", () => {
         notion: "j_user1",
         hackernews: null,
       },
+      actionInputConstraints: { "github.*": { owner: "FFXLab", repo: "Jenny" } },
     });
     expect(created.token).toMatch(/^oct_/);
     expect(created.record.tokenHash).not.toBe(created.token);
@@ -144,6 +145,7 @@ describe("D1RuntimeDatabase", () => {
         notion: "j_user1",
         hackernews: null,
       },
+      actionInputConstraints: { "github.*": { owner: "FFXLab", repo: "Jenny" } },
     });
     expect(listed?.lastUsedAt).toBeTruthy();
 
@@ -508,6 +510,9 @@ class SqliteD1Database implements D1DatabaseBinding {
     );
     this.database.exec(
       readFileSync(new URL("../../../migrations/0010_runtime_token_expiry.sql", import.meta.url), "utf8"),
+    );
+    this.database.exec(
+      readFileSync(new URL("../../../migrations/0011_runtime_token_input_constraints.sql", import.meta.url), "utf8"),
     );
   }
 

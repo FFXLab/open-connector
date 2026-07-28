@@ -101,6 +101,7 @@ describe("action execution OpenAPI", () => {
       items: { maxLength: 256, description: expect.stringContaining("256-byte UTF-8 limit") },
     });
     expect(tokenSummary.required).toEqual(expect.arrayContaining(["allowedActions", "blockedActions"]));
+    expect(tokenSummary.properties).toHaveProperty("actionInputConstraints");
     expect(runLog.properties).toHaveProperty("policy");
     expect(runLog.properties).toHaveProperty("runtimeTokenId");
   });

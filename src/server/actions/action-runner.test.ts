@@ -148,6 +148,36 @@ describe("ActionRunner", () => {
       },
     });
   });
+
+  it("rejects runtime-token input outside an exact action constraint before execution", async () => {
+    const runs = new MemoryRunLogStore();
+    const { logger } = createTestLogger();
+    const providerLoader = new TestProviderLoader(async () => ({ ok: true, output: {} }));
+    const loadExecutor = vi.spyOn(providerLoader, "loadActionExecutor");
+    const resolveConnection = vi.spyOn(ConnectionService.prototype, "resolveForExecution");
+    const runner = createRunner({ runs, logger, providerLoader });
+
+    const denied = await runner.run({
+      actionId: "example.echo",
+      input: { owner: "other", repo: "repo" },
+      caller: "mcp",
+      actionInputConstraints: { "example.*": { owner: "expected", repo: "repo" } },
+    });
+    expect(denied?.result).toMatchObject({
+      ok: false,
+      error: { code: "action_input_not_allowed" },
+    });
+    expect(resolveConnection).not.toHaveBeenCalled();
+    expect(loadExecutor).not.toHaveBeenCalled();
+
+    const allowed = await runner.run({
+      actionId: "example.echo",
+      input: { owner: "expected", repo: "repo", message: "hello" },
+      caller: "mcp",
+      actionInputConstraints: { "example.*": { owner: "expected", repo: "repo" } },
+    });
+    expect(allowed?.result).toEqual({ ok: true, output: {} });
+  });
 });
 
 function createRunner(options: {

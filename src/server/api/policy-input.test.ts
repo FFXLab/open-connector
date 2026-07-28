@@ -28,6 +28,7 @@ describe("policy input", () => {
       allowedActions: [],
       blockedActions: [],
       allowedConnections: {},
+      actionInputConstraints: {},
     });
     expect(() => readTokenActionPolicy({})).toThrow("allowedActions must be an array of strings");
   });
@@ -52,7 +53,27 @@ describe("policy input", () => {
       allowedActions: ["github.*"],
       blockedActions: [],
       allowedConnections: { github: "project-alias", hackernews: null },
+      actionInputConstraints: undefined,
     });
+  });
+
+  it("normalizes exact action input constraints and rejects structured values", () => {
+    expect(
+      readTokenActionPolicy({
+        allowedActions: ["github.*"],
+        blockedActions: [],
+        actionInputConstraints: { " github.* ": { " owner ": "FFXLab", repo: "Jenny" } },
+      }),
+    ).toMatchObject({
+      actionInputConstraints: { "github.*": { owner: "FFXLab", repo: "Jenny" } },
+    });
+    expect(() =>
+      readTokenActionPolicy({
+        allowedActions: ["github.*"],
+        blockedActions: [],
+        actionInputConstraints: { "github.*": { owner: { login: "FFXLab" } } },
+      }),
+    ).toThrow("must be a scalar JSON value");
   });
 
   it("rejects invalid proxy wildcards", () => {

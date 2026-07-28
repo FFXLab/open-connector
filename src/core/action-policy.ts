@@ -30,6 +30,7 @@ export interface TokenActionPolicy {
   allowedActions: string[];
   blockedActions: string[];
   allowedConnections?: Record<string, string | null>;
+  actionInputConstraints?: Record<string, Record<string, string | number | boolean | null>>;
 }
 
 export interface RuntimePolicyState {

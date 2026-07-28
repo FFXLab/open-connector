@@ -578,6 +578,7 @@ export class ConnectServer {
         connectionName,
         policy,
         runtimeTokenId: runtimeGrant?.tokenId,
+        actionInputConstraints: runtimeGrant?.actionInputConstraints,
       });
       if (!run) {
         return serializeRuntimeFailure({
@@ -905,6 +906,7 @@ export class ConnectServer {
         allowedActions: created.record.allowedActions,
         blockedActions: created.record.blockedActions,
         allowedConnections: created.record.allowedConnections,
+        actionInputConstraints: created.record.actionInputConstraints,
         createdAt: created.record.createdAt,
         expiresAt: created.record.expiresAt,
       },

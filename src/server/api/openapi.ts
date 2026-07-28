@@ -355,6 +355,7 @@ export function createOpenApiDocument(
             allowedActions: policyRuleArraySchema("Action allow rules applied to this stored runtime token."),
             blockedActions: policyRuleArraySchema("Action block rules applied to this stored runtime token."),
             allowedConnections: runtimeTokenConnectionsSchema(),
+            actionInputConstraints: runtimeTokenInputConstraintsSchema(),
             createdAt: jsonSchema.string({ description: "Creation timestamp." }),
             expiresAt: jsonSchema.string({ description: "Optional server-enforced expiry timestamp." }),
             lastUsedAt: jsonSchema.string({ description: "Last successful use timestamp." }),
@@ -370,6 +371,7 @@ export function createOpenApiDocument(
             allowedActions: policyRuleArraySchema("Optional action allow rules for the new token."),
             blockedActions: policyRuleArraySchema("Optional action block rules for the new token."),
             allowedConnections: runtimeTokenConnectionsSchema(),
+            actionInputConstraints: runtimeTokenInputConstraintsSchema(),
             expiresAt: jsonSchema.string({
               description: "Optional future timestamp after which the token is rejected.",
             }),
@@ -384,6 +386,7 @@ export function createOpenApiDocument(
             allowedActions: policyRuleArraySchema("Action allow rules for this token."),
             blockedActions: policyRuleArraySchema("Action block rules for this token."),
             allowedConnections: runtimeTokenConnectionsSchema(),
+            actionInputConstraints: runtimeTokenInputConstraintsSchema(),
           },
           {
             required: ["allowedActions", "blockedActions", "allowedConnections"],
@@ -736,6 +739,16 @@ function runtimeTokenConnectionsSchema(): JsonSchema {
   return jsonSchema.record(
     "Exact service-to-connection allowlist for this token. Null permits a no-auth service without a stored connection.",
     jsonSchema.nullable(jsonSchema.string({ description: "Stored connection name." })),
+  );
+}
+
+function runtimeTokenInputConstraintsSchema(): JsonSchema {
+  return jsonSchema.record(
+    "Exact scalar input values required for matching action rules on this token.",
+    jsonSchema.record(
+      "Action input field constraints.",
+      { type: ["string", "number", "boolean", "null"] },
+    ),
   );
 }
 
