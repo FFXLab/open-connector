@@ -18,7 +18,7 @@ export function evaluateRuntimeConnection(
   if (!grant || Object.keys(allowedConnections).length === 0) {
     return { allowed: true, connectionName: requestedConnectionName };
   }
-  if (!(service in allowedConnections)) {
+  if (!Object.prototype.hasOwnProperty.call(allowedConnections, service)) {
     return {
       allowed: false,
       code: "connection_not_allowed",
@@ -41,7 +41,11 @@ export function evaluateRuntimeConnection(
 
 export function runtimeGrantAllowsService(grant: RuntimeGrant | undefined, service: string): boolean {
   const allowedConnections = grant?.allowedConnections ?? {};
-  return !grant || Object.keys(allowedConnections).length === 0 || service in allowedConnections;
+  return (
+    !grant ||
+    Object.keys(allowedConnections).length === 0 ||
+    Object.prototype.hasOwnProperty.call(allowedConnections, service)
+  );
 }
 
 export function runtimeGrantAllowsProxy(grant: RuntimeGrant | undefined): boolean {

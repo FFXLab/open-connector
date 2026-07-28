@@ -50,7 +50,10 @@ describe("SqliteRuntimeDatabase", () => {
       "0009_runtime_token_connections.sql",
     ];
     expect(entries.filter((entry) => entry.message === "sqlite migration started")).toEqual(
-      migrations.map((migration) => ({ fields: { migration }, message: "sqlite migration started" })),
+      migrations.map((migration) => ({
+        fields: { migration },
+        message: "sqlite migration started",
+      })),
     );
     expect(entries.filter((entry) => entry.message === "sqlite migration completed")).toEqual(
       migrations.map((migration) => ({
@@ -205,12 +208,18 @@ describe("SqliteRuntimeDatabase", () => {
       expiresAt: "2026-07-01T00:00:00.000Z",
     };
 
-    await expect(first.idempotencyStore.claim(claim)).resolves.toEqual({ kind: "acquired" });
+    await expect(first.idempotencyStore.claim(claim)).resolves.toEqual({
+      kind: "acquired",
+    });
     await expect(first.idempotencyStore.claim({ ...claim, claimId: "claim-2" })).resolves.toEqual({
       kind: "in_progress",
     });
     await expect(
-      first.idempotencyStore.claim({ ...claim, requestHash: "different-request", claimId: "claim-3" }),
+      first.idempotencyStore.claim({
+        ...claim,
+        requestHash: "different-request",
+        claimId: "claim-3",
+      }),
     ).resolves.toEqual({ kind: "conflict" });
     const response = successResponse({ executionId: "execution-1" });
     await expect(
@@ -259,12 +268,13 @@ describe("SqliteRuntimeDatabase", () => {
     database.close();
 
     const raw = new DatabaseSync(databasePath);
-    raw
-      .prepare("update idempotency_records set response_value = ? where key_hash = ?")
-      .run(
-        JSON.stringify({ status: 201, body: { success: true, message: "OK", data: null, meta: {} } }),
-        claim.keyHash,
-      );
+    raw.prepare("update idempotency_records set response_value = ? where key_hash = ?").run(
+      JSON.stringify({
+        status: 201,
+        body: { success: true, message: "OK", data: null, meta: {} },
+      }),
+      claim.keyHash,
+    );
     raw.close();
 
     const reopened = new SqliteRuntimeDatabase(databasePath);
@@ -314,8 +324,12 @@ describe("SqliteRuntimeDatabase", () => {
     const staleResponse = successResponse({ claim: "stale" });
     const response = successResponse({ claim: "current" });
 
-    await expect(database.idempotencyStore.claim(first)).resolves.toEqual({ kind: "acquired" });
-    await expect(database.idempotencyStore.claim(second)).resolves.toEqual({ kind: "acquired" });
+    await expect(database.idempotencyStore.claim(first)).resolves.toEqual({
+      kind: "acquired",
+    });
+    await expect(database.idempotencyStore.claim(second)).resolves.toEqual({
+      kind: "acquired",
+    });
     await expect(
       database.idempotencyStore.complete({
         keyHash: first.keyHash,
@@ -373,7 +387,10 @@ describe("SqliteRuntimeDatabase", () => {
     expect(first.items.map((run) => run.id)).toEqual(["run-3", "run-2"]);
     expect(first.nextCursor).toBeTruthy();
 
-    const second = await database.runLogStore.list({ limit: 2, cursor: first.nextCursor });
+    const second = await database.runLogStore.list({
+      limit: 2,
+      cursor: first.nextCursor,
+    });
     expect(second.items.map((run) => run.id)).toEqual(["run-1"]);
     expect(second.nextCursor).toBeUndefined();
     database.close();
@@ -387,11 +404,18 @@ describe("SqliteRuntimeDatabase", () => {
     await database.runLogStore.add(createRun("hackernews-1", "2026-06-30T00:00:01.000Z", "news.get_top_stories"));
     await database.runLogStore.add(createRun("gmail-2", "2026-06-30T00:00:02.000Z", "mail.list_threads", "gmail"));
 
-    const first = await database.runLogStore.list({ service: "gmail", limit: 1 });
+    const first = await database.runLogStore.list({
+      service: "gmail",
+      limit: 1,
+    });
     expect(first.items.map((run) => run.id)).toEqual(["gmail-2"]);
     expect(first.nextCursor).toBeTruthy();
 
-    const second = await database.runLogStore.list({ service: "gmail", limit: 1, cursor: first.nextCursor });
+    const second = await database.runLogStore.list({
+      service: "gmail",
+      limit: 1,
+      cursor: first.nextCursor,
+    });
     expect(second.items.map((run) => run.id)).toEqual(["gmail-1"]);
     expect(second.nextCursor).toBeUndefined();
     database.close();
@@ -410,7 +434,11 @@ describe("SqliteRuntimeDatabase", () => {
     await database.runLogStore.add(match);
 
     await expect(
-      database.runLogStore.list({ actionId: "gmail.send_message", caller: "mcp", ok: false }),
+      database.runLogStore.list({
+        actionId: "gmail.send_message",
+        caller: "mcp",
+        ok: false,
+      }),
     ).resolves.toMatchObject({ items: [{ id: "run-match" }] });
     await expect(database.runLogStore.get("run-match")).resolves.toEqual(match);
     await expect(database.runLogStore.get("missing")).resolves.toBeUndefined();
@@ -450,14 +478,17 @@ describe("SqliteRuntimeDatabase", () => {
     const databasePath = await createDatabasePath();
     const legacy = new DatabaseSync(databasePath);
     legacy.exec(readFileSync(new URL("../../../migrations/0001_runtime.sql", import.meta.url), "utf8"));
-    legacy
-      .prepare("insert into connections (service, connection_name, value, updated_at) values (?, ?, ?, ?)")
-      .run(
-        "github",
-        "default",
-        JSON.stringify({ authType: "api_key", apiKey: "legacy-token", values: {}, metadata: {} }),
-        "2026-06-30T00:00:00.000Z",
-      );
+    legacy.prepare("insert into connections (service, connection_name, value, updated_at) values (?, ?, ?, ?)").run(
+      "github",
+      "default",
+      JSON.stringify({
+        authType: "api_key",
+        apiKey: "legacy-token",
+        values: {},
+        metadata: {},
+      }),
+      "2026-06-30T00:00:00.000Z",
+    );
     legacy
       .prepare(
         `
@@ -492,7 +523,9 @@ describe("SqliteRuntimeDatabase", () => {
       items: [{ id: "legacy-github", service: "github" }],
     });
     const migratedConnection = await migrated.connectionStore.get("github", "default");
-    expect(migratedConnection).toMatchObject({ credential: { apiKey: "legacy-token" } });
+    expect(migratedConnection).toMatchObject({
+      credential: { apiKey: "legacy-token" },
+    });
     expect(migratedConnection?.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     await expect(migrated.runLogStore.get("legacy-github")).resolves.toMatchObject({
       connectionId: migratedConnection?.id,
@@ -597,6 +630,7 @@ describe("SqliteRuntimeDatabase", () => {
     const created = await tokens.createToken("Claude Desktop", {
       allowedActions: ["github.*"],
       blockedActions: ["github.delete_repository"],
+      allowedConnections: { github: "j_p_project1_agent1", notion: "j_user1" },
     });
     expect(created.token).toMatch(/^oct_/);
     expect(created.record.name).toBe("Claude Desktop");
@@ -610,6 +644,7 @@ describe("SqliteRuntimeDatabase", () => {
       name: "Claude Desktop",
       allowedActions: ["github.*"],
       blockedActions: ["github.delete_repository"],
+      allowedConnections: { github: "j_p_project1_agent1", notion: "j_user1" },
     });
     expect(listed?.lastUsedAt).toBeTruthy();
     expect(JSON.stringify(listed)).not.toContain(created.token);
@@ -622,6 +657,7 @@ describe("SqliteRuntimeDatabase", () => {
     ).resolves.toMatchObject({
       allowedActions: ["github.get_current_user"],
       blockedActions: [],
+      allowedConnections: { github: "j_p_project1_agent1", notion: "j_user1" },
     });
 
     await expect(tokens.revokeToken(created.record.id)).resolves.toBe(true);
@@ -758,7 +794,9 @@ describe("SqliteRuntimeDatabase", () => {
       clientSecret: "client-secret",
     });
     await expect(withNewKey.runtimeTokenStore.list()).resolves.toMatchObject([{ id: token.record.id }]);
-    await expect(withNewKey.runLogStore.list()).resolves.toMatchObject({ items: [{ id: "run-1" }] });
+    await expect(withNewKey.runLogStore.list()).resolves.toMatchObject({
+      items: [{ id: "run-1" }],
+    });
     await expect(withNewKey.idempotencyStore.claim({ ...claim, claimId: "claim-3" })).resolves.toEqual({
       kind: "completed",
       response: successResponse({ token: "rotated-idempotency-secret" }),

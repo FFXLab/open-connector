@@ -10,7 +10,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { ConnectionError } from "./connection-service.ts";
+import { ConnectionError, defaultConnectionName } from "./connection-service.ts";
 import { ActionPolicyService, emptyPolicyRules } from "./core/action-policy.ts";
 import { createActionSearchIndexProvider, searchActions as searchActionIndex } from "./core/action-search.ts";
 import { renderActionMarkdown } from "./server/api/action-markdown.ts";
@@ -234,7 +234,7 @@ async function listApps(options: IMcpServerOptions, query: string | undefined): 
         ? connections.find(
             (candidate) =>
               candidate.service === provider.service &&
-              candidate.connectionName === (decision.connectionName ?? "default"),
+              candidate.connectionName === (decision.connectionName ?? defaultConnectionName),
           )
         : undefined;
       return {
@@ -265,7 +265,10 @@ async function searchActions(
   }
   const actionSearch = options.actionSearch ?? createActionSearchIndexProvider(options.catalog.actions);
   const rankedActions = query
-    ? searchActionIndex(await actionSearch.get(), query, { service: input.service, limit: input.limit })
+    ? searchActionIndex(await actionSearch.get(), query, {
+        service: input.service,
+        limit: input.limit,
+      })
         .map((result) => options.catalog.actionsById.get(result.id))
         .filter((action): action is RuntimeActionDefinition => Boolean(action))
     : options.catalog.actions
@@ -421,7 +424,11 @@ async function describeActionMarkdownContext(
   action: RuntimeActionDefinition,
   connectionName?: string,
   policy?: ActionPolicySnapshot,
-): Promise<{ connection?: ConnectionSummary; providerPermissions: string[]; policy: ActionPolicyDecision }> {
+): Promise<{
+  connection?: ConnectionSummary;
+  providerPermissions: string[];
+  policy: ActionPolicyDecision;
+}> {
   return {
     connection: await getSelectedConnectionSummary(options, action.service, connectionName),
     providerPermissions: action.providerPermissions,
@@ -479,7 +486,12 @@ interface ToolError {
 type ToolPayload = Record<string, unknown> &
   (
     | { ok: true; data: unknown; executionId?: never; auditPersisted?: never }
-    | { ok: false; error: ToolError; executionId?: never; auditPersisted?: never }
+    | {
+        ok: false;
+        error: ToolError;
+        executionId?: never;
+        auditPersisted?: never;
+      }
     | ({ ok: true; data: unknown } & ToolExecutionMeta)
     | ({ ok: false; error: ToolError } & ToolExecutionMeta)
   );
