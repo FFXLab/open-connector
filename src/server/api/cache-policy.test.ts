@@ -3,7 +3,7 @@ import { getResponseCachePolicy } from "./cache-policy.ts";
 
 describe("getResponseCachePolicy", () => {
   it("returns public cache headers only for successful catalog reads", () => {
-    expect(getResponseCachePolicy("GET", "/v1/actions/example.echo", 200)).toEqual({
+    expect(getResponseCachePolicy("GET", "/api/actions/example.echo", 200)).toEqual({
       cacheControl: "public, max-age=0, must-revalidate",
       cloudflareCdnCacheControl: "public, max-age=31536000, stale-while-revalidate=86400",
       vary: "Authorization, Cookie",
@@ -18,9 +18,15 @@ describe("getResponseCachePolicy", () => {
   it("returns no-store for runtime responses that are not successful catalog reads", () => {
     expect(getResponseCachePolicy("POST", "/v1/actions/example.echo", 200)).toEqual({
       cacheControl: "no-store",
+      cloudflareCdnCacheControl: "no-store",
     });
     expect(getResponseCachePolicy("GET", "/v1/actions/search", 200)).toEqual({
       cacheControl: "no-store",
+      cloudflareCdnCacheControl: "no-store",
+    });
+    expect(getResponseCachePolicy("POST", "/mcp", 200)).toEqual({
+      cacheControl: "no-store",
+      cloudflareCdnCacheControl: "no-store",
     });
     expect(getResponseCachePolicy("GET", "/api/providers/missing", 404)).toEqual({
       cacheControl: "no-store",
