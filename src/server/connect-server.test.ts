@@ -1179,6 +1179,61 @@ describe("ConnectServer", () => {
     expect(reopened.status).toBe(200);
   });
 
+  it("forces HTTP actions to the stored token connection and rejects alias bypasses", async () => {
+    const runtimeTokens = new RuntimeTokenService(new MemoryRuntimeTokenStore());
+    const app = createTestServer([{ ...apiKeyProvider, actions: [echoAction] }], {
+      runtimeTokens,
+      providerLoader: new ActionProviderLoader(async (input, context) => {
+        const credential = await context.getCredential("example");
+        return {
+          ok: true,
+          output: { input, account: credential?.authType === "api_key" ? credential.apiKey : undefined },
+        };
+      }),
+    }).createApp();
+    for (const [connectionName, apiKey] of [
+      ["default", "default-key"],
+      ["project", "project-key"],
+    ]) {
+      await app.request("/api/connections/example", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ authType: "api_key", connectionName, values: { apiKey } }),
+      });
+    }
+    const created = await app.request("/api/runtime-tokens", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Project Agent",
+        allowedActions: ["example.*"],
+        blockedActions: [],
+        allowedConnections: { example: "project" },
+      }),
+    });
+    const { token } = (await created.json()) as { token: string };
+
+    const forced = await app.request("/v1/actions/example.echo", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ input: { message: "hello" } }),
+    });
+    expect(forced.status).toBe(200);
+    await expect(forced.json()).resolves.toMatchObject({ data: { account: "project-key" } });
+
+    const bypass = await app.request("/v1/actions/example.echo", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "x-oo-connector-alias": "default",
+      },
+      body: JSON.stringify({ input: { message: "hello" } }),
+    });
+    expect(bypass.status).toBe(403);
+    await expect(bypass.json()).resolves.toMatchObject({ errorCode: "connection_not_allowed" });
+  });
+
   it("reads and replaces Runtime policy without changing deployment rules", async () => {
     const runtimePolicyStore = new MemoryRuntimePolicyStore();
     const app = createTestServer([apiKeyProvider], {

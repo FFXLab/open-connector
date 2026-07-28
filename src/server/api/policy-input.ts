@@ -25,7 +25,40 @@ export function readTokenActionPolicy(body: JsonRequestBody, allowOmitted = fals
   return {
     allowedActions: readRules(body.allowedActions, "allowedActions", "action", allowOmitted),
     blockedActions: readRules(body.blockedActions, "blockedActions", "action", allowOmitted),
+    allowedConnections: readAllowedConnections(body.allowedConnections, allowOmitted),
   };
+}
+
+function readAllowedConnections(value: unknown, allowOmitted: boolean): Record<string, string | null> | undefined {
+  if (value === undefined) return allowOmitted ? {} : undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw invalidInput("allowedConnections must be an object keyed by service.");
+  }
+  const entries = Object.entries(value);
+  if (entries.length > policyRuleListMaxItems) {
+    throw invalidInput(`allowedConnections must not contain more than ${policyRuleListMaxItems} entries.`);
+  }
+  return Object.fromEntries(
+    entries.map(([service, connectionName]) => {
+      const normalizedService = service.trim();
+      if (!normalizedService || /\s/.test(normalizedService) || normalizedService.includes("*")) {
+        throw invalidInput(`allowedConnections contains an invalid service: ${service}.`);
+      }
+      if (connectionName !== null && typeof connectionName !== "string") {
+        throw invalidInput(`allowedConnections.${normalizedService} must be a connection name or null.`);
+      }
+      const normalizedConnection = typeof connectionName === "string" ? connectionName.trim() : null;
+      if (typeof connectionName === "string" && !normalizedConnection) {
+        throw invalidInput(`allowedConnections.${normalizedService} must not be empty.`);
+      }
+      if (normalizedConnection && Buffer.byteLength(normalizedConnection, "utf8") > policyRuleMaxBytes) {
+        throw invalidInput(
+          `allowedConnections.${normalizedService} must not exceed ${policyRuleMaxBytes} UTF-8 bytes.`,
+        );
+      }
+      return [normalizedService, normalizedConnection];
+    }),
+  );
 }
 
 function readRules(value: unknown, fieldName: string, kind: "action" | "proxy", allowOmitted = false): string[] {
