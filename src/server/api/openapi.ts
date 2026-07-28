@@ -356,6 +356,7 @@ export function createOpenApiDocument(
             blockedActions: policyRuleArraySchema("Action block rules applied to this stored runtime token."),
             allowedConnections: runtimeTokenConnectionsSchema(),
             createdAt: jsonSchema.string({ description: "Creation timestamp." }),
+            expiresAt: jsonSchema.string({ description: "Optional server-enforced expiry timestamp." }),
             lastUsedAt: jsonSchema.string({ description: "Last successful use timestamp." }),
           },
           {
@@ -369,6 +370,9 @@ export function createOpenApiDocument(
             allowedActions: policyRuleArraySchema("Optional action allow rules for the new token."),
             blockedActions: policyRuleArraySchema("Optional action block rules for the new token."),
             allowedConnections: runtimeTokenConnectionsSchema(),
+            expiresAt: jsonSchema.string({
+              description: "Optional future timestamp after which the token is rejected.",
+            }),
           },
           {
             required: ["name"],

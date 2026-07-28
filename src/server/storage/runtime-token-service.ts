@@ -10,6 +10,7 @@ export interface RuntimeTokenRecord {
   blockedActions: string[];
   allowedConnections?: Record<string, string | null>;
   createdAt: string;
+  expiresAt?: string;
   lastUsedAt?: string;
 }
 
@@ -20,6 +21,7 @@ export interface RuntimeTokenSummary {
   blockedActions: string[];
   allowedConnections?: Record<string, string | null>;
   createdAt: string;
+  expiresAt?: string;
   lastUsedAt?: string;
 }
 
@@ -53,6 +55,7 @@ export class RuntimeTokenService {
   async createToken(
     name: string,
     policy: TokenActionPolicy = { allowedActions: [], blockedActions: [], allowedConnections: {} },
+    expiresAt?: string,
   ): Promise<RuntimeTokenCreation> {
     const token = `${tokenPrefix}${randomBytes(32).toString("base64url")}`;
     const now = new Date().toISOString();
@@ -64,6 +67,7 @@ export class RuntimeTokenService {
       blockedActions: policy.blockedActions,
       allowedConnections: policy.allowedConnections ?? {},
       createdAt: now,
+      expiresAt: normalizeFutureExpiry(expiresAt, now),
     };
     await this.store.add(record);
     return { token, record };
@@ -89,6 +93,9 @@ export class RuntimeTokenService {
     const tokenHash = hashRuntimeToken(token);
     const matched = await this.store.findByHash(tokenHash);
     if (!matched || !equalHashes(matched.tokenHash, tokenHash)) {
+      return undefined;
+    }
+    if (matched.expiresAt && Date.parse(matched.expiresAt) <= Date.now()) {
       return undefined;
     }
 
@@ -118,8 +125,18 @@ export function summarizeRuntimeToken(record: RuntimeTokenRecord): RuntimeTokenS
     blockedActions: record.blockedActions,
     allowedConnections: record.allowedConnections ?? {},
     createdAt: record.createdAt,
+    expiresAt: record.expiresAt,
     lastUsedAt: record.lastUsedAt,
   };
+}
+
+function normalizeFutureExpiry(expiresAt: string | undefined, now: string): string | undefined {
+  if (expiresAt === undefined) return undefined;
+  const timestamp = Date.parse(expiresAt);
+  if (!Number.isFinite(timestamp) || timestamp <= Date.parse(now)) {
+    throw new Error("expiresAt must be a valid future timestamp.");
+  }
+  return new Date(timestamp).toISOString();
 }
 
 function equalHashes(left: string, right: string): boolean {

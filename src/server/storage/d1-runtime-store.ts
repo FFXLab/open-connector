@@ -220,9 +220,9 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
       .prepare(
         `
         insert into runtime_tokens (
-          id, name, token_hash, allowed_actions, blocked_actions, allowed_connections, created_at, last_used_at
+          id, name, token_hash, allowed_actions, blocked_actions, allowed_connections, created_at, expires_at, last_used_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       )
       .bind(
@@ -233,6 +233,7 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
         JSON.stringify(record.blockedActions),
         JSON.stringify(record.allowedConnections ?? {}),
         record.createdAt,
+        record.expiresAt ?? null,
         record.lastUsedAt ?? null,
       )
       .run();
@@ -242,7 +243,7 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
     const { results } = await this.database
       .prepare(
         `
-        select id, name, token_hash, allowed_actions, blocked_actions, allowed_connections, created_at, last_used_at
+        select id, name, token_hash, allowed_actions, blocked_actions, allowed_connections, created_at, expires_at, last_used_at
         from runtime_tokens
         where revoked_at is null
         order by created_at desc, id desc
@@ -256,7 +257,7 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
     const row = await this.database
       .prepare(
         `
-        select id, name, token_hash, allowed_actions, blocked_actions, allowed_connections, created_at, last_used_at
+        select id, name, token_hash, allowed_actions, blocked_actions, allowed_connections, created_at, expires_at, last_used_at
         from runtime_tokens
         where token_hash = ? and revoked_at is null
       `,
@@ -273,7 +274,7 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
         update runtime_tokens
         set allowed_actions = ?, blocked_actions = ?, allowed_connections = coalesce(?, allowed_connections)
         where id = ? and revoked_at is null
-        returning id, name, token_hash, allowed_actions, blocked_actions, allowed_connections, created_at, last_used_at
+        returning id, name, token_hash, allowed_actions, blocked_actions, allowed_connections, created_at, expires_at, last_used_at
       `,
       )
       .bind(
@@ -308,6 +309,7 @@ function readRuntimeTokenRow(row: RuntimeRow): RuntimeTokenRecord {
     blockedActions: parseJson(readString(row, "blocked_actions")),
     allowedConnections: parseJson(readString(row, "allowed_connections")),
     createdAt: readString(row, "created_at"),
+    expiresAt: readOptionalString(row, "expires_at"),
     lastUsedAt: readOptionalString(row, "last_used_at"),
   };
 }
