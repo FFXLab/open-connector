@@ -630,7 +630,11 @@ describe("SqliteRuntimeDatabase", () => {
     const created = await tokens.createToken("Claude Desktop", {
       allowedActions: ["github.*"],
       blockedActions: ["github.delete_repository"],
-      allowedConnections: { github: "j_p_project1_agent1", notion: "j_user1" },
+      allowedConnections: {
+        github: "j_p_project1_agent1",
+        notion: "j_user1",
+        hackernews: null,
+      },
     });
     expect(created.token).toMatch(/^oct_/);
     expect(created.record.name).toBe("Claude Desktop");
@@ -644,7 +648,11 @@ describe("SqliteRuntimeDatabase", () => {
       name: "Claude Desktop",
       allowedActions: ["github.*"],
       blockedActions: ["github.delete_repository"],
-      allowedConnections: { github: "j_p_project1_agent1", notion: "j_user1" },
+      allowedConnections: {
+        github: "j_p_project1_agent1",
+        notion: "j_user1",
+        hackernews: null,
+      },
     });
     expect(listed?.lastUsedAt).toBeTruthy();
     expect(JSON.stringify(listed)).not.toContain(created.token);
@@ -657,7 +665,11 @@ describe("SqliteRuntimeDatabase", () => {
     ).resolves.toMatchObject({
       allowedActions: ["github.get_current_user"],
       blockedActions: [],
-      allowedConnections: { github: "j_p_project1_agent1", notion: "j_user1" },
+      allowedConnections: {
+        github: "j_p_project1_agent1",
+        notion: "j_user1",
+        hackernews: null,
+      },
     });
 
     await expect(tokens.revokeToken(created.record.id)).resolves.toBe(true);

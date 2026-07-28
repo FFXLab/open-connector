@@ -123,7 +123,11 @@ describe("D1RuntimeDatabase", () => {
     const created = await tokens.createToken("Claude Desktop", {
       allowedActions: ["github.*"],
       blockedActions: ["github.delete_repository"],
-      allowedConnections: { github: "j_p_project1_agent1", notion: "j_user1" },
+      allowedConnections: {
+        github: "j_p_project1_agent1",
+        notion: "j_user1",
+        hackernews: null,
+      },
     });
     expect(created.token).toMatch(/^oct_/);
     expect(created.record.tokenHash).not.toBe(created.token);
@@ -135,7 +139,11 @@ describe("D1RuntimeDatabase", () => {
       name: "Claude Desktop",
       allowedActions: ["github.*"],
       blockedActions: ["github.delete_repository"],
-      allowedConnections: { github: "j_p_project1_agent1", notion: "j_user1" },
+      allowedConnections: {
+        github: "j_p_project1_agent1",
+        notion: "j_user1",
+        hackernews: null,
+      },
     });
     expect(listed?.lastUsedAt).toBeTruthy();
 
@@ -147,7 +155,11 @@ describe("D1RuntimeDatabase", () => {
     ).resolves.toMatchObject({
       allowedActions: ["github.get_current_user"],
       blockedActions: [],
-      allowedConnections: { github: "j_p_project1_agent1", notion: "j_user1" },
+      allowedConnections: {
+        github: "j_p_project1_agent1",
+        notion: "j_user1",
+        hackernews: null,
+      },
     });
 
     await expect(tokens.revokeToken(created.record.id)).resolves.toBe(true);
