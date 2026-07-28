@@ -1895,7 +1895,8 @@ describe("ConnectServer", () => {
 
     const providers = await app.request("/v1/providers");
     expect(providers.status).toBe(200);
-    expect(providers.headers.get("cache-control")).toBe("public, max-age=0, must-revalidate");
+    expect(providers.headers.get("cache-control")).toBe("no-store");
+    expect(providers.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
     await expect(providers.json()).resolves.toMatchObject({
       success: true,
       data: [
@@ -1910,7 +1911,7 @@ describe("ConnectServer", () => {
 
     const actionServices = await app.request("/v1/actions");
     expect(actionServices.status).toBe(200);
-    expect(actionServices.headers.get("cache-control")).toBe("public, max-age=0, must-revalidate");
+    expect(actionServices.headers.get("cache-control")).toBe("no-store");
     await expect(actionServices.json()).resolves.toMatchObject({
       success: true,
       data: [{ service: "example" }],
@@ -1918,7 +1919,7 @@ describe("ConnectServer", () => {
 
     const actions = await app.request("/v1/actions?service=example");
     expect(actions.status).toBe(200);
-    expect(actions.headers.get("cache-control")).toBe("public, max-age=0, must-revalidate");
+    expect(actions.headers.get("cache-control")).toBe("no-store");
     await expect(actions.json()).resolves.toMatchObject({
       success: true,
       data: [
@@ -1983,7 +1984,7 @@ describe("ConnectServer", () => {
 
     const action = await app.request("/v1/actions/example.echo");
     expect(action.status).toBe(200);
-    expect(action.headers.get("cache-control")).toBe("public, max-age=0, must-revalidate");
+    expect(action.headers.get("cache-control")).toBe("no-store");
     await expect(action.json()).resolves.toMatchObject({
       success: true,
       meta: {},
@@ -2004,7 +2005,7 @@ describe("ConnectServer", () => {
     });
     expect(run.status).toBe(200);
     expect(run.headers.get("cache-control")).toBe("no-store");
-    expect(run.headers.get("cloudflare-cdn-cache-control")).toBeNull();
+    expect(run.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
     await expect(run.json()).resolves.toMatchObject({
       success: true,
       message: "OK",
