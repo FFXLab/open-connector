@@ -29,6 +29,7 @@ export interface PolicyRules {
 export interface TokenActionPolicy {
   allowedActions: string[];
   blockedActions: string[];
+  allowedConnections?: Record<string, string | null>;
 }
 
 export interface RuntimePolicyState {

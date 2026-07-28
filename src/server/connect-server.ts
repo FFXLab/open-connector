@@ -50,6 +50,11 @@ import {
   writeRuntimeFailure,
   writeRuntimeSuccess,
 } from "./api/runtime-api.ts";
+import {
+  evaluateRuntimeConnection,
+  runtimeGrantAllowsProxy,
+  runtimeGrantAllowsService,
+} from "./api/runtime-connection-grant.ts";
 import { createTransitFileResponse, TransitFileError } from "./files/transit-file-store.ts";
 import { ProxyRunner } from "./proxy/proxy-runner.ts";
 import { decodeRunLogCursor } from "./storage/runtime-store.ts";
@@ -316,9 +321,17 @@ export class ConnectServer {
     }
 
     const policy = (await this.getPolicySnapshot(context)).evaluate(action);
+    const connection = evaluateRuntimeConnection(
+      readRuntimeGrant(context),
+      action.service,
+      readConnectionName(context),
+    );
+    if (!connection.allowed) {
+      return jsonError(context, 403, connection.code, connection.message);
+    }
     return context.text(
       renderActionMarkdown(action, {
-        connection: await this.options.connections.getConnectionSummary(action.service, readConnectionName(context)),
+        connection: await this.options.connections.getConnectionSummary(action.service, connection.connectionName),
         providerPermissions: action.providerPermissions,
         policy,
       }),
@@ -332,7 +345,9 @@ export class ConnectServer {
   private listRuntimeProviders(context: Context): Response {
     const services = context.req.queries("service") ?? [];
     const query = optionalString(context.req.query("q"))?.toLowerCase();
+    const grant = readRuntimeGrant(context);
     const providers = this.options.catalog.providers.filter((provider) => {
+      if (!runtimeGrantAllowsService(grant, provider.service)) return false;
       if (services.length > 0 && !services.includes(provider.service)) {
         return false;
       }
@@ -350,11 +365,19 @@ export class ConnectServer {
   }
 
   private listRuntimeActions(context: Context): Response {
+    const grant = readRuntimeGrant(context);
     const service = optionalString(context.req.query("service"));
     if (!service) {
-      const services = [...new Set(this.options.catalog.actions.map((action) => action.service))];
+      const services = [
+        ...new Set(
+          this.options.catalog.actions
+            .filter((action) => runtimeGrantAllowsService(grant, action.service))
+            .map((action) => action.service),
+        ),
+      ];
       return writeRuntimeSuccess(context, services.map(serializeRuntimeActionService));
     }
+    if (!runtimeGrantAllowsService(grant, service)) return writeRuntimeSuccess(context, []);
 
     const actions = this.options.catalog.actions.filter((action) => action.service === service);
     return writeRuntimeSuccess(context, actions.map(serializeRuntimeAction));
@@ -375,14 +398,18 @@ export class ConnectServer {
       service: query.service,
       limit: query.limit,
     });
-    return writeRuntimeSuccess(context, await this.serializeSearchResults(results));
+    return writeRuntimeSuccess(context, await this.serializeSearchResults(results, readRuntimeGrant(context)));
   }
 
-  private async serializeSearchResults(results: ActionSearchResult[]): Promise<RuntimeActionSearchResult[]> {
+  private async serializeSearchResults(
+    results: ActionSearchResult[],
+    grant?: RuntimeGrant,
+  ): Promise<RuntimeActionSearchResult[]> {
     const authenticated = new Set(
       await this.options.connections.listAuthenticatedServices([...new Set(results.map((result) => result.service))]),
     );
     return results.flatMap((result) => {
+      if (!runtimeGrantAllowsService(grant, result.service)) return [];
       const action = this.options.catalog.actionsById.get(result.id);
       if (!action) {
         return [];
@@ -394,6 +421,14 @@ export class ConnectServer {
   private getRuntimeAction(context: Context, actionId: string): Response {
     const action = this.options.catalog.actionsById.get(actionId);
     if (!action) {
+      return writeRuntimeFailure(context, {
+        status: 404,
+        errorCode: "invalid_input",
+        message: `unknown action: ${actionId}`,
+        meta: { actionId },
+      });
+    }
+    if (!runtimeGrantAllowsService(readRuntimeGrant(context), action.service)) {
       return writeRuntimeFailure(context, {
         status: 404,
         errorCode: "invalid_input",
@@ -418,8 +453,17 @@ export class ConnectServer {
 
     const body = await readJsonBody(context);
     const input = body.input ?? {};
-    const connectionName = readConnectionName(context, body);
     const runtimeGrant = readRuntimeGrant(context);
+    const connection = evaluateRuntimeConnection(runtimeGrant, action.service, readConnectionName(context, body));
+    if (!connection.allowed) {
+      return writeRuntimeFailure(context, {
+        status: 403,
+        errorCode: connection.code,
+        message: connection.message,
+        meta: { actionId },
+      });
+    }
+    const connectionName = connection.connectionName;
     let policy: ActionPolicySnapshot;
     try {
       policy = await this.getPolicySnapshot(context);
@@ -580,6 +624,14 @@ export class ConnectServer {
 
       throw error;
     }
+    if (!runtimeGrantAllowsProxy(readRuntimeGrant(context))) {
+      return writeRuntimeFailure(context, {
+        status: 403,
+        errorCode: "proxy_not_allowed",
+        message: "Raw provider proxy access is not available to connection-scoped runtime tokens.",
+        meta: { service },
+      });
+    }
 
     let policy: ActionPolicySnapshot;
     try {
@@ -592,10 +644,19 @@ export class ConnectServer {
         meta: { service },
       });
     }
+    const connection = evaluateRuntimeConnection(readRuntimeGrant(context), service, readConnectionName(context, body));
+    if (!connection.allowed) {
+      return writeRuntimeFailure(context, {
+        status: 403,
+        errorCode: connection.code,
+        message: connection.message,
+        meta: { service },
+      });
+    }
     const result = await this.proxyRunner.run({
       service,
       input: body,
-      connectionName: readConnectionName(context, body),
+      connectionName: connection.connectionName,
       policy,
     });
     if (result.ok) {
@@ -612,17 +673,30 @@ export class ConnectServer {
   }
 
   private async listRuntimeApps(context: Context): Promise<Response> {
+    const grant = readRuntimeGrant(context);
     return writeRuntimeSuccess(
       context,
-      (await this.options.connections.listConnections()).map(serializeRuntimeConnectedApp),
+      (await this.options.connections.listConnections())
+        .filter(
+          (connection) =>
+            runtimeGrantAllowsService(grant, connection.service) &&
+            evaluateRuntimeConnection(grant, connection.service, connection.connectionName).allowed,
+        )
+        .map(serializeRuntimeConnectedApp),
     );
   }
 
   private async listRuntimeAppsByService(context: Context, service: string): Promise<Response> {
     try {
+      const grant = readRuntimeGrant(context);
+      if (!runtimeGrantAllowsService(grant, service)) {
+        return writeRuntimeSuccess(context, []);
+      }
       return writeRuntimeSuccess(
         context,
-        (await this.options.connections.listConnectionsByService(service)).map(serializeRuntimeConnectedApp),
+        (await this.options.connections.listConnectionsByService(service))
+          .filter((connection) => evaluateRuntimeConnection(grant, service, connection.connectionName).allowed)
+          .map(serializeRuntimeConnectedApp),
       );
     } catch (error) {
       if (error instanceof ConnectionError) {
@@ -826,6 +900,7 @@ export class ConnectServer {
         name: created.record.name,
         allowedActions: created.record.allowedActions,
         blockedActions: created.record.blockedActions,
+        allowedConnections: created.record.allowedConnections,
         createdAt: created.record.createdAt,
       },
     });

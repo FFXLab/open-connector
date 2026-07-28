@@ -123,6 +123,11 @@ describe("D1RuntimeDatabase", () => {
     const created = await tokens.createToken("Claude Desktop", {
       allowedActions: ["github.*"],
       blockedActions: ["github.delete_repository"],
+      allowedConnections: {
+        github: "j_p_project1_agent1",
+        notion: "j_user1",
+        hackernews: null,
+      },
     });
     expect(created.token).toMatch(/^oct_/);
     expect(created.record.tokenHash).not.toBe(created.token);
@@ -134,6 +139,11 @@ describe("D1RuntimeDatabase", () => {
       name: "Claude Desktop",
       allowedActions: ["github.*"],
       blockedActions: ["github.delete_repository"],
+      allowedConnections: {
+        github: "j_p_project1_agent1",
+        notion: "j_user1",
+        hackernews: null,
+      },
     });
     expect(listed?.lastUsedAt).toBeTruthy();
 
@@ -145,6 +155,11 @@ describe("D1RuntimeDatabase", () => {
     ).resolves.toMatchObject({
       allowedActions: ["github.get_current_user"],
       blockedActions: [],
+      allowedConnections: {
+        github: "j_p_project1_agent1",
+        notion: "j_user1",
+        hackernews: null,
+      },
     });
 
     await expect(tokens.revokeToken(created.record.id)).resolves.toBe(true);
@@ -203,9 +218,15 @@ describe("D1RuntimeDatabase", () => {
       expiresAt: "2026-07-01T00:00:00.000Z",
     };
 
-    await expect(database.idempotencyStore.claim(claim)).resolves.toEqual({ kind: "acquired" });
+    await expect(database.idempotencyStore.claim(claim)).resolves.toEqual({
+      kind: "acquired",
+    });
     await expect(
-      database.idempotencyStore.claim({ ...claim, requestHash: "request-2", claimId: "claim-2" }),
+      database.idempotencyStore.claim({
+        ...claim,
+        requestHash: "request-2",
+        claimId: "claim-2",
+      }),
     ).resolves.toEqual({ kind: "conflict" });
 
     const response = successResponse({ id: "message-1" });
@@ -242,7 +263,10 @@ describe("D1RuntimeDatabase", () => {
     await d1
       .prepare("update idempotency_records set response_value = ? where key_hash = ?")
       .bind(
-        JSON.stringify({ status: 500, body: { success: true, message: "OK", data: null, meta: {} } }),
+        JSON.stringify({
+          status: 500,
+          body: { success: true, message: "OK", data: null, meta: {} },
+        }),
         claim.keyHash,
       )
       .run();
@@ -262,7 +286,9 @@ describe("D1RuntimeDatabase", () => {
       expiresAt: "2026-06-30T00:01:00.000Z",
     };
 
-    await expect(database.idempotencyStore.claim(oldClaim)).resolves.toEqual({ kind: "acquired" });
+    await expect(database.idempotencyStore.claim(oldClaim)).resolves.toEqual({
+      kind: "acquired",
+    });
 
     const newClaim = {
       ...oldClaim,
@@ -270,7 +296,9 @@ describe("D1RuntimeDatabase", () => {
       now: oldClaim.expiresAt,
       expiresAt: "2026-07-01T00:01:00.000Z",
     };
-    await expect(database.idempotencyStore.claim(newClaim)).resolves.toEqual({ kind: "acquired" });
+    await expect(database.idempotencyStore.claim(newClaim)).resolves.toEqual({
+      kind: "acquired",
+    });
     await expect(
       database.idempotencyStore.complete({
         keyHash: oldClaim.keyHash,
@@ -291,7 +319,10 @@ describe("D1RuntimeDatabase", () => {
         expiresAt: "2026-07-01T00:01:00.000Z",
       }),
     ).resolves.toBe(true);
-    await expect(database.idempotencyStore.claim(newClaim)).resolves.toEqual({ kind: "completed", response });
+    await expect(database.idempotencyStore.claim(newClaim)).resolves.toEqual({
+      kind: "completed",
+      response,
+    });
   });
 
   it("stores completed idempotency responses through the secret codec", async () => {
@@ -320,11 +351,16 @@ describe("D1RuntimeDatabase", () => {
     expect(d1.value("idempotency_records", "key_hash", claim.keyHash, "response_value")).not.toContain(
       "provider-secret",
     );
-    await expect(database.idempotencyStore.claim(claim)).resolves.toEqual({ kind: "completed", response });
+    await expect(database.idempotencyStore.claim(claim)).resolves.toEqual({
+      kind: "completed",
+      response,
+    });
   });
 
   it("keeps only the configured number of recent runs", async () => {
-    const database = new D1RuntimeDatabase(new SqliteD1Database(), { runLimit: 2 });
+    const database = new D1RuntimeDatabase(new SqliteD1Database(), {
+      runLimit: 2,
+    });
 
     await database.runLogStore.add(createRun("run-1", "2026-06-30T00:00:00.000Z"));
     await database.runLogStore.add(createRun("run-2", "2026-06-30T00:00:01.000Z"));
@@ -336,7 +372,9 @@ describe("D1RuntimeDatabase", () => {
   });
 
   it("paginates recent runs with a cursor", async () => {
-    const database = new D1RuntimeDatabase(new SqliteD1Database(), { runLimit: 4 });
+    const database = new D1RuntimeDatabase(new SqliteD1Database(), {
+      runLimit: 4,
+    });
 
     await database.runLogStore.add(createRun("run-1", "2026-06-30T00:00:00.000Z"));
     await database.runLogStore.add(createRun("run-2", "2026-06-30T00:00:01.000Z"));
@@ -346,29 +384,43 @@ describe("D1RuntimeDatabase", () => {
     expect(first.items.map((run) => run.id)).toEqual(["run-3", "run-2"]);
     expect(first.nextCursor).toBeTruthy();
 
-    const second = await database.runLogStore.list({ limit: 2, cursor: first.nextCursor });
+    const second = await database.runLogStore.list({
+      limit: 2,
+      cursor: first.nextCursor,
+    });
     expect(second.items.map((run) => run.id)).toEqual(["run-1"]);
     expect(second.nextCursor).toBeUndefined();
   });
 
   it("filters recent runs by service before paginating", async () => {
-    const database = new D1RuntimeDatabase(new SqliteD1Database(), { runLimit: 5 });
+    const database = new D1RuntimeDatabase(new SqliteD1Database(), {
+      runLimit: 5,
+    });
 
     await database.runLogStore.add(createRun("gmail-1", "2026-06-30T00:00:00.000Z", "mail.search_threads", "gmail"));
     await database.runLogStore.add(createRun("hackernews-1", "2026-06-30T00:00:01.000Z", "news.get_top_stories"));
     await database.runLogStore.add(createRun("gmail-2", "2026-06-30T00:00:02.000Z", "mail.list_threads", "gmail"));
 
-    const first = await database.runLogStore.list({ service: "gmail", limit: 1 });
+    const first = await database.runLogStore.list({
+      service: "gmail",
+      limit: 1,
+    });
     expect(first.items.map((run) => run.id)).toEqual(["gmail-2"]);
     expect(first.nextCursor).toBeTruthy();
 
-    const second = await database.runLogStore.list({ service: "gmail", limit: 1, cursor: first.nextCursor });
+    const second = await database.runLogStore.list({
+      service: "gmail",
+      limit: 1,
+      cursor: first.nextCursor,
+    });
     expect(second.items.map((run) => run.id)).toEqual(["gmail-1"]);
     expect(second.nextCursor).toBeUndefined();
   });
 
   it("filters runs by action, caller, and status and reads one run by id", async () => {
-    const database = new D1RuntimeDatabase(new SqliteD1Database(), { runLimit: 5 });
+    const database = new D1RuntimeDatabase(new SqliteD1Database(), {
+      runLimit: 5,
+    });
     const match = {
       ...createRun("run-match", "2026-06-30T00:00:02.000Z", "gmail.send_message", "gmail"),
       caller: "mcp" as const,
@@ -379,7 +431,11 @@ describe("D1RuntimeDatabase", () => {
     await database.runLogStore.add(match);
 
     await expect(
-      database.runLogStore.list({ actionId: "gmail.send_message", caller: "mcp", ok: false }),
+      database.runLogStore.list({
+        actionId: "gmail.send_message",
+        caller: "mcp",
+        ok: false,
+      }),
     ).resolves.toMatchObject({ items: [{ id: "run-match" }] });
     await expect(database.runLogStore.get("run-match")).resolves.toEqual(match);
     await expect(database.runLogStore.get("missing")).resolves.toBeUndefined();
@@ -398,7 +454,9 @@ describe("D1RuntimeDatabase", () => {
     await expect(database.runLogStore.add(createRun("run-2", "2026-06-30T00:00:01.000Z"))).resolves.toEqual({
       retentionApplied: false,
     });
-    await expect(database.runLogStore.get("run-2")).resolves.toMatchObject({ id: "run-2" });
+    await expect(database.runLogStore.get("run-2")).resolves.toMatchObject({
+      id: "run-2",
+    });
   });
 });
 
@@ -445,6 +503,9 @@ class SqliteD1Database implements D1DatabaseBinding {
     this.database.exec(
       readFileSync(new URL("../../../migrations/0008_runtime_token_policy.sql", import.meta.url), "utf8"),
     );
+    this.database.exec(
+      readFileSync(new URL("../../../migrations/0009_runtime_token_connections.sql", import.meta.url), "utf8"),
+    );
   }
 
   prepare(query: string): D1PreparedStatementBinding {
@@ -488,7 +549,9 @@ class SqliteD1PreparedStatement implements D1PreparedStatementBinding {
   }
 
   async all<T = Record<string, unknown>>(): Promise<{ results: T[] }> {
-    return { results: this.database.prepare(this.query).all(...toSqlValues(this.values)) as T[] };
+    return {
+      results: this.database.prepare(this.query).all(...toSqlValues(this.values)) as T[],
+    };
   }
 
   async run(): Promise<{ success: boolean; meta: { changes?: number } }> {

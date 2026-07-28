@@ -24,7 +24,11 @@ describe("policy input", () => {
   });
 
   it("allows omitted token rules only during creation", () => {
-    expect(readTokenActionPolicy({}, true)).toEqual({ allowedActions: [], blockedActions: [] });
+    expect(readTokenActionPolicy({}, true)).toEqual({
+      allowedActions: [],
+      blockedActions: [],
+      allowedConnections: {},
+    });
     expect(() => readTokenActionPolicy({})).toThrow("allowedActions must be an array of strings");
   });
 
@@ -36,6 +40,20 @@ describe("policy input", () => {
       );
     },
   );
+
+  it("normalizes exact token connection grants", () => {
+    expect(
+      readTokenActionPolicy({
+        allowedActions: ["github.*"],
+        blockedActions: [],
+        allowedConnections: { " github ": " project-alias ", hackernews: null },
+      }),
+    ).toEqual({
+      allowedActions: ["github.*"],
+      blockedActions: [],
+      allowedConnections: { github: "project-alias", hackernews: null },
+    });
+  });
 
   it("rejects invalid proxy wildcards", () => {
     expect(() =>

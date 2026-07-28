@@ -354,11 +354,12 @@ export function createOpenApiDocument(
             name: jsonSchema.string({ description: "User-facing token label." }),
             allowedActions: policyRuleArraySchema("Action allow rules applied to this stored runtime token."),
             blockedActions: policyRuleArraySchema("Action block rules applied to this stored runtime token."),
+            allowedConnections: runtimeTokenConnectionsSchema(),
             createdAt: jsonSchema.string({ description: "Creation timestamp." }),
             lastUsedAt: jsonSchema.string({ description: "Last successful use timestamp." }),
           },
           {
-            required: ["id", "name", "allowedActions", "blockedActions", "createdAt"],
+            required: ["id", "name", "allowedActions", "blockedActions", "allowedConnections", "createdAt"],
             description: "Runtime API token summary. Plaintext tokens and token hashes are not returned.",
           },
         ),
@@ -367,6 +368,7 @@ export function createOpenApiDocument(
             name: jsonSchema.string({ description: "User-facing token label." }),
             allowedActions: policyRuleArraySchema("Optional action allow rules for the new token."),
             blockedActions: policyRuleArraySchema("Optional action block rules for the new token."),
+            allowedConnections: runtimeTokenConnectionsSchema(),
           },
           {
             required: ["name"],
@@ -377,9 +379,10 @@ export function createOpenApiDocument(
           {
             allowedActions: policyRuleArraySchema("Action allow rules for this token."),
             blockedActions: policyRuleArraySchema("Action block rules for this token."),
+            allowedConnections: runtimeTokenConnectionsSchema(),
           },
           {
-            required: ["allowedActions", "blockedActions"],
+            required: ["allowedActions", "blockedActions", "allowedConnections"],
             description: "Complete replacement of one stored runtime token's action policy.",
           },
         ),
@@ -723,6 +726,13 @@ function policyRuleArraySchema(description: string): JsonSchema {
     },
     description,
   };
+}
+
+function runtimeTokenConnectionsSchema(): JsonSchema {
+  return jsonSchema.record(
+    "Exact service-to-connection allowlist for this token. Null permits a no-auth service without a stored connection.",
+    jsonSchema.nullable(jsonSchema.string({ description: "Stored connection name." })),
+  );
 }
 
 function createMcpPath(): unknown {

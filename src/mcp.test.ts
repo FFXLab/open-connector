@@ -462,6 +462,48 @@ describe("MCP server", () => {
       },
     );
   });
+
+  it("confines MCP discovery and execution to the token connection allowlist", async () => {
+    await withAuthenticatedMcpClient(
+      async (client) => {
+        const connections = await client.callTool({ name: "list_connections", arguments: {} });
+        expect(connections.structuredContent).toMatchObject({
+          ok: true,
+          data: [{ service: "example_auth", connectionName: "secondary" }],
+        });
+
+        const forced = await client.callTool({
+          name: "execute_action",
+          arguments: { actionId: "example_auth.get_account", input: {} },
+        });
+        expect(forced.structuredContent).toMatchObject({
+          ok: true,
+          data: { accountId: "account-secondary" },
+          connection: { connectionName: "secondary" },
+        });
+
+        const bypass = await client.callTool({
+          name: "execute_action",
+          arguments: {
+            actionId: "example_auth.get_account",
+            input: {},
+            connectionName: "default",
+          },
+        });
+        expect(bypass.structuredContent).toMatchObject({
+          ok: false,
+          error: { code: "connection_not_allowed" },
+        });
+      },
+      new MemoryRunLogStore(),
+      {
+        tokenId: "token-connection-scope",
+        allowedActions: ["example_auth.*"],
+        blockedActions: [],
+        allowedConnections: { example_auth: "secondary" },
+      },
+    );
+  });
 });
 
 async function withMcpClient(
@@ -508,6 +550,12 @@ async function withMcpClient(
 async function withAuthenticatedMcpClient(
   run: (client: Client) => Promise<void>,
   runs = new MemoryRunLogStore(),
+  runtimeGrant?: {
+    tokenId: string;
+    allowedActions: string[];
+    blockedActions: string[];
+    allowedConnections?: Record<string, string | null>;
+  },
 ): Promise<void> {
   const catalog = createCatalogStore([authenticatedProvider], {
     executableActionIds: ["example_auth.get_account"],
@@ -532,7 +580,7 @@ async function withAuthenticatedMcpClient(
     ]),
   });
   const actions = new ActionRunner({ catalog, providerLoader, connections, runs });
-  const server = createMcpServer({ catalog, providerLoader, connections, actions });
+  const server = createMcpServer({ catalog, providerLoader, connections, actions, runtimeGrant });
   const client = new Client({ name: "mcp-test", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
