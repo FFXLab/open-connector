@@ -34,14 +34,16 @@ export const executors: ProviderExecutors = defineProviderExecutors<GitHubAction
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher }) {
-    return validateGitHubToken(input.apiKey, fetcher);
+    return input.apiKey.startsWith("ghs_")
+      ? validateGitHubInstallationToken(input.apiKey, fetcher)
+      : validateGitHubUserToken(input.apiKey, fetcher);
   },
   async oauth2(input, { fetcher }) {
-    return validateGitHubToken(input.accessToken, fetcher);
+    return validateGitHubUserToken(input.accessToken, fetcher);
   },
 };
 
-async function validateGitHubToken(accessToken: string, fetcher: typeof fetch) {
+async function validateGitHubUserToken(accessToken: string, fetcher: typeof fetch) {
   const user = await githubRequestJson<Record<string, unknown>>({
     path: "/user",
     accessToken,
@@ -59,6 +61,34 @@ async function validateGitHubToken(accessToken: string, fetcher: typeof fetch) {
     },
     metadata: {
       currentUser: user,
+    },
+  };
+}
+
+async function validateGitHubInstallationToken(accessToken: string, fetcher: typeof fetch) {
+  const installation = await githubRequestJson<{
+    total_count?: number;
+    repositories?: Array<{ owner?: { id?: number; login?: string } }>;
+  }>({
+    path: "/installation/repositories",
+    query: { per_page: 1 },
+    accessToken,
+    fetcher,
+  });
+  const owner = installation.repositories?.[0]?.owner;
+  const ownerId = owner?.id === undefined ? undefined : String(owner.id);
+  const ownerLogin = typeof owner?.login === "string" ? owner.login : undefined;
+
+  return {
+    profile: {
+      accountId: ownerId ?? ownerLogin ?? "github:installation",
+      displayName: ownerLogin ? `${ownerLogin} GitHub App` : "GitHub App installation",
+    },
+    metadata: {
+      installation: {
+        repositoryCount: installation.total_count ?? 0,
+        owner: owner ?? null,
+      },
     },
   };
 }
