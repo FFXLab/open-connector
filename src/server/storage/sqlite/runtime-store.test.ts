@@ -680,14 +680,10 @@ describe("SqliteRuntimeDatabase", () => {
       inspected.prepare("select name from runtime_migrations where name = ?").get("0008_runtime_token_policy.sql"),
     ).toBeDefined();
     expect(
-      inspected
-        .prepare("select name from runtime_migrations where name = ?")
-        .get("0009_runtime_token_connections.sql"),
+      inspected.prepare("select name from runtime_migrations where name = ?").get("0009_runtime_token_connections.sql"),
     ).toBeDefined();
     expect(
-      inspected
-        .prepare("select name from runtime_migrations where name = ?")
-        .get("0010_runtime_token_expiry.sql"),
+      inspected.prepare("select name from runtime_migrations where name = ?").get("0010_runtime_token_expiry.sql"),
     ).toBeDefined();
     expect(
       inspected

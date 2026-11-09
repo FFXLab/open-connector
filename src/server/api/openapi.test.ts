@@ -317,7 +317,9 @@ describe("action execution OpenAPI", () => {
       createRequest.properties.allowedConnections,
       tokenPolicy.properties.allowedConnections,
     ]) {
-      expect(schema.anyOf?.some((item) => item.type === "array" && item.maxItems === expectedGrant.maxItems)).toBe(true);
+      expect(schema.anyOf?.some((item) => item.type === "array" && item.maxItems === expectedGrant.maxItems)).toBe(
+        true,
+      );
       expect(schema.description).toMatch(/connection grants/i);
     }
   });
