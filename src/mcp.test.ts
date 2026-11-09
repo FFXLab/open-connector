@@ -1,16 +1,18 @@
-import type { IConnectionStore, StoredConnection } from "./connection-service.ts";
+import type { CatalogStore } from "./catalog-store.ts";
+import type { IConnectionStore, StoredConnection } from "./connection-store.ts";
 import type { ActionPolicySnapshot } from "./core/action-policy.ts";
 import type { ActionDefinition, ActionExecutor, ProviderDefinition, ResolvedCredential } from "./core/types.ts";
 import type { IProviderLoader } from "./providers/provider-loader.ts";
 import type { IRunLogStore, RunLog, RunLogPage } from "./server/storage/runtime-store.ts";
+import type { RuntimeGrant } from "./server/storage/runtime-token-service.ts";
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client } from "@modelcontextprotocol/client";
+import { InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
 import { createCatalogStore } from "./catalog-store.ts";
 import { ConnectionService } from "./connection-service.ts";
 import { ActionPolicyService, emptyPolicyRules } from "./core/action-policy.ts";
-import { createMcpServer } from "./mcp.ts";
+import { createMcpServer, listMcpToolSummaries } from "./mcp.ts";
 import { ActionRunner } from "./server/actions/action-runner.ts";
 
 const echoAction: ActionDefinition = {
@@ -18,6 +20,7 @@ const echoAction: ActionDefinition = {
   service: "example",
   name: "echo",
   description: "Echo input.",
+  operationType: "write",
   requiredScopes: [],
   providerPermissions: [],
   inputSchema: {
@@ -45,6 +48,7 @@ const getAccountAction: ActionDefinition = {
   service: "example_auth",
   name: "get_account",
   description: "Return the connected account.",
+  operationType: "read",
   requiredScopes: ["records:read"],
   providerPermissions: [],
   inputSchema: {
@@ -89,6 +93,139 @@ const secondaryCredential: ResolvedCredential = {
 };
 
 describe("MCP server", () => {
+  it("searches without loading schemas and filters denied hits before limiting", async () => {
+    const other: ActionDefinition = { ...echoAction, id: "example.echo_other", name: "echo_other" };
+    const catalog = createCatalogStore([{ ...exampleProvider, actions: [echoAction, other] }]);
+    const getAction = vi.spyOn(catalog, "getAction").mockRejectedValue(new Error("schema must stay lazy"));
+    const policy = new ActionPolicyService().createSnapshot(emptyPolicyRules(), {
+      allowedActions: [],
+      blockedActions: ["example.echo"],
+      allowedProxies: [],
+    });
+    await withMcpClient(
+      async (client) => {
+        const result = await client.callTool({ name: "search_actions", arguments: { query: "echo", limit: 1 } });
+        expect(result.structuredContent).toEqual({
+          ok: true,
+          data: [{ id: other.id, description: other.description, available: false }],
+        });
+        expect(getAction).not.toHaveBeenCalled();
+      },
+      { catalog, getPolicySnapshot: async () => policy },
+    );
+  });
+
+  it("loads connections in one batch for selected services without reading schemas", async () => {
+    const actions = [
+      getAccountAction,
+      { ...getAccountAction, id: "example_auth.get_other_account", name: "get_other_account" },
+    ];
+    const catalog = createCatalogStore([{ ...authenticatedProvider, actions }], {
+      executableActionIds: actions.map((action) => action.id),
+    });
+    const getAction = vi.spyOn(catalog, "getAction").mockRejectedValue(new Error("schema must remain lazy"));
+    const list = vi.spyOn(ConnectionService.prototype, "listConnections");
+    try {
+      await withMcpClient(
+        async (client) => {
+          const result = await client.callTool({ name: "search_actions", arguments: { query: "account" } });
+          expect(result.structuredContent).toMatchObject({ data: [expect.anything(), expect.anything()] });
+          expect(list).toHaveBeenCalledExactlyOnceWith(new Set(["example_auth"]));
+          expect(getAction).not.toHaveBeenCalled();
+        },
+        { catalog },
+      );
+    } finally {
+      list.mockRestore();
+    }
+  });
+
+  it("paginates provider names after policy filtering without reading schemas", async () => {
+    const providers = ["alpha", "beta", "gamma"].map((service) => ({
+      ...exampleProvider,
+      service,
+      displayName: service,
+      actions: [{ ...echoAction, id: `${service}.echo`, service }],
+    }));
+    const catalog = createCatalogStore(providers);
+    const getAction = vi.spyOn(catalog, "getAction").mockRejectedValue(new Error("schema must stay lazy"));
+    const policy = new ActionPolicyService().createSnapshot(emptyPolicyRules(), {
+      allowedActions: [],
+      blockedActions: ["alpha.*"],
+      allowedProxies: [],
+    });
+    await withMcpClient(
+      async (client) => {
+        const first = await client.callTool({ name: "list_apps", arguments: { limit: 1 } });
+        expect(first.structuredContent).toEqual({
+          ok: true,
+          data: [{ service: "beta", displayName: "beta" }],
+          nextCursor: "1",
+        });
+        const second = await client.callTool({ name: "list_apps", arguments: { limit: 1, cursor: "1" } });
+        expect(second.structuredContent).toEqual({
+          ok: true,
+          data: [{ service: "gamma", displayName: "gamma" }],
+          nextCursor: null,
+        });
+        const text = second.content[0];
+        expect(text).toMatchObject({ type: "text", text: JSON.stringify(second.structuredContent) });
+        expect(getAction).not.toHaveBeenCalled();
+      },
+      { catalog, getPolicySnapshot: async () => policy },
+    );
+  });
+
+  it("paginates connection summaries without profiles", async () => {
+    await withAuthenticatedMcpClient(async (client) => {
+      const first = await client.callTool({
+        name: "list_connections",
+        arguments: { service: "example_auth", limit: 1 },
+      });
+      expect(first.structuredContent).toMatchObject({ data: [{ connectionName: "default" }], nextCursor: "1" });
+      const second = await client.callTool({
+        name: "list_connections",
+        arguments: { service: "example_auth", limit: 1, cursor: "1" },
+      });
+      expect(second.structuredContent).toMatchObject({ data: [{ connectionName: "secondary" }], nextCursor: null });
+      expect(JSON.stringify(second.structuredContent)).not.toContain("profile");
+    });
+  });
+
+  it.each([
+    { name: "search_actions", arguments: { query: " " } },
+    { name: "search_actions", arguments: { query: "echo", limit: 21 } },
+    { name: "list_connections", arguments: {} },
+    { name: "list_apps", arguments: { cursor: "-1" } },
+    { name: "list_apps", arguments: { limit: 51 } },
+  ])("rejects invalid discovery inputs: %j", async (request) => {
+    await withMcpClient(async (client) => {
+      const result = await client.callTool(request);
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  it.each(["missing", "unreadable"])("returns structured discovery errors for %s action definitions", async (state) => {
+    const catalog = createCatalogStore([exampleProvider]);
+    vi.spyOn(catalog, "getAction").mockImplementation(async () => {
+      if (state === "unreadable") throw new Error("private catalog file path");
+      return undefined;
+    });
+    await withMcpClient(
+      async (client) => {
+        for (const request of [{ name: "get_action_guide", arguments: { actionId: "example.echo" } }]) {
+          const response = await client.callTool(request);
+          expect(response.structuredContent).toMatchObject({
+            ok: false,
+            error: { code: state === "missing" ? "unknown_action" : "internal_error" },
+          });
+          expect(JSON.stringify(response)).not.toContain("private catalog file path");
+        }
+      },
+      { catalog },
+    );
+  });
+
   it("lists the discovery tools through the MCP protocol", async () => {
     await withMcpClient(async (client) => {
       const result = await client.listTools();
@@ -100,6 +237,23 @@ describe("MCP server", () => {
         "get_action_guide",
         "execute_action",
       ]);
+      expect(result.tools.map((tool) => tool.annotations)).toEqual([
+        { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+      ]);
+    });
+  });
+
+  it("projects the tool summaries from the registered tools", async () => {
+    await withMcpClient(async (client) => {
+      const result = await client.listTools();
+
+      expect(listMcpToolSummaries()).toEqual(
+        result.tools.map(({ name, title, description }) => ({ name, title, description })),
+      );
     });
   });
 
@@ -130,7 +284,7 @@ describe("MCP server", () => {
         data: [
           {
             id: "example.echo",
-            service: "example",
+            available: true,
           },
         ],
       });
@@ -152,6 +306,26 @@ describe("MCP server", () => {
     });
   });
 
+  it("renders an execute_action example in action guides instead of HTTP requests", async () => {
+    await withMcpClient(async (client) => {
+      const guide = await client.callTool({ name: "get_action_guide", arguments: { actionId: "example.echo" } });
+
+      expect(guide.structuredContent).toMatchObject({
+        ok: true,
+        data: {
+          capability: {
+            operationType: "write",
+          },
+          markdown: expect.stringContaining("Call the `execute_action` tool with these arguments:"),
+        },
+      });
+      const markdown = (guide.structuredContent as { data: { markdown: string } }).data.markdown;
+      expect(markdown).toContain('"actionId": "example.echo"');
+      expect(markdown).not.toContain("curl");
+      expect(markdown).not.toContain("localhost");
+    });
+  });
+
   it("lists safe connection profiles without exposing credentials", async () => {
     await withAuthenticatedMcpClient(async (client) => {
       const result = await client.callTool({
@@ -163,25 +337,60 @@ describe("MCP server", () => {
       expect(result.structuredContent).toEqual({
         ok: true,
         data: [
-          {
-            id: "connection-default",
-            service: "example_auth",
-            connectionName: "default",
-            authType: "api_key",
-            default: true,
-            profile: defaultCredential.profile,
-          },
-          {
-            id: "connection-secondary",
-            service: "example_auth",
-            connectionName: "secondary",
-            authType: "api_key",
-            default: false,
-            profile: secondaryCredential.profile,
-          },
+          { connectionName: "default", accountLabel: "Default Account", default: true, available: true },
+          { connectionName: "secondary", accountLabel: "Secondary Account", default: false, available: true },
         ],
+        nextCursor: null,
       });
       expect(JSON.stringify(result.structuredContent)).not.toContain("test-token");
+    });
+  });
+
+  it("omits virtual no-auth accounts without preventing action discovery", async () => {
+    const policy = new ActionPolicyService().createSnapshot(emptyPolicyRules(), {
+      allowedActions: [],
+      blockedActions: [],
+      allowedProxies: [],
+      allowedConnections: ["unrelated-connection-id"],
+    });
+    await withMcpClient(
+      async (client) => {
+        const result = await client.callTool({ name: "list_connections", arguments: { service: "example" } });
+
+        expect(result.structuredContent).toMatchObject({
+          ok: true,
+          data: [],
+          nextCursor: null,
+        });
+      },
+      { getPolicySnapshot: async () => policy },
+    );
+  });
+
+  it("returns compact search summaries and keeps the full capability in guides", async () => {
+    await withAuthenticatedMcpClient(async (client) => {
+      const search = await client.callTool({
+        name: "search_actions",
+        arguments: { query: "account", service: "example_auth" },
+      });
+      const guide = await client.callTool({
+        name: "get_action_guide",
+        arguments: { actionId: "example_auth.get_account" },
+      });
+
+      expect(search.structuredContent).toEqual({
+        ok: true,
+        data: [{ id: "example_auth.get_account", description: "Return the connected account.", available: true }],
+      });
+      expect(guide.structuredContent).toMatchObject({
+        ok: true,
+        data: {
+          capability: {
+            requiredScopes: ["records:read"],
+            connection: { connectionName: "default", profile: defaultCredential.profile },
+          },
+        },
+      });
     });
   });
 
@@ -230,7 +439,7 @@ describe("MCP server", () => {
     }, runs);
   });
 
-  it("returns the selected connection when execution fails", async () => {
+  it("returns validation errors before resolving the selected connection", async () => {
     await withAuthenticatedMcpClient(async (client) => {
       const result = await client.callTool({
         name: "execute_action",
@@ -250,11 +459,8 @@ describe("MCP server", () => {
         },
         executionId: expect.any(String),
         auditPersisted: true,
-        connection: {
-          connectionName: "secondary",
-          profile: secondaryCredential.profile,
-        },
       });
+      expect(result.structuredContent).not.toHaveProperty("connection");
     });
   });
 
@@ -338,17 +544,12 @@ describe("MCP server", () => {
         ok: false,
         executionId: expect.any(String),
         auditPersisted: true,
-        connection: {
-          service: "example",
-          connectionName: "default",
-          authType: "no_auth",
-          default: true,
-        },
         error: {
           code: "invalid_input",
           message: "Action input does not match the action schema.",
         },
       });
+      expect(result.structuredContent).not.toHaveProperty("connection");
     });
   });
 
@@ -393,10 +594,10 @@ describe("MCP server", () => {
     await withMcpClient(
       async (client) => {
         await client.callTool({ name: "list_apps", arguments: {} });
-        await client.callTool({ name: "list_connections", arguments: {} });
-        expect(load).not.toHaveBeenCalled();
+        await client.callTool({ name: "list_connections", arguments: { service: "example" } });
+        expect(load).toHaveBeenCalledTimes(1);
 
-        await client.callTool({ name: "search_actions", arguments: { limit: 5 } });
+        await client.callTool({ name: "search_actions", arguments: { query: "echo", limit: 5 } });
         await client.callTool({ name: "get_action_guide", arguments: { actionId: "example.echo" } });
         expect(load).toHaveBeenCalledTimes(1);
       },
@@ -408,7 +609,9 @@ describe("MCP server", () => {
     await withMcpClient(
       async (client) => {
         for (const request of [
-          { name: "search_actions", arguments: { limit: 5 } },
+          { name: "list_apps", arguments: {} },
+          { name: "list_connections", arguments: { service: "example" } },
+          { name: "search_actions", arguments: { query: "echo", limit: 5 } },
           { name: "get_action_guide", arguments: { actionId: "example.echo" } },
           { name: "execute_action", arguments: { actionId: "example.echo", input: { message: "hello" } } },
         ]) {
@@ -423,10 +626,29 @@ describe("MCP server", () => {
     );
   });
 
+  it("propagates the MCP request cancellation signal to action execution", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await withMcpClient(
+      async (client) => {
+        const result = await client.callTool({
+          name: "execute_action",
+          arguments: { actionId: "example.echo", input: { message: "hello" } },
+        });
+        expect(result.structuredContent).toMatchObject({
+          ok: false,
+          error: { code: "execution_cancelled" },
+        });
+      },
+      { signal: controller.signal },
+    );
+  });
+
   it("applies token policy to MCP guides and execution", async () => {
     const policy = new ActionPolicyService().createSnapshot(emptyPolicyRules(), {
       allowedActions: ["example.*"],
       blockedActions: ["example.echo"],
+      allowedProxies: [],
     });
     await withMcpClient(
       async (client) => {
@@ -458,104 +680,144 @@ describe("MCP server", () => {
       },
       {
         getPolicySnapshot: async () => policy,
-        runtimeGrant: { tokenId: "token-1", allowedActions: ["example.*"], blockedActions: ["example.echo"] },
+        runtimeGrant: {
+          tokenId: "token-1",
+          allowedActions: ["example.*"],
+          blockedActions: ["example.echo"],
+          allowedProxies: [],
+        },
       },
     );
   });
 
-  it("confines MCP discovery and execution to the token connection allowlist", async () => {
+  it("enforces token connection scope on execute_action and filters connection identity", async () => {
+    const policy = new ActionPolicyService().createSnapshot(emptyPolicyRules(), {
+      allowedActions: [],
+      blockedActions: [],
+      allowedProxies: [],
+      allowedConnections: ["connection-secondary", "connection-ghost"],
+    });
     await withAuthenticatedMcpClient(
       async (client) => {
-        const connections = await client.callTool({ name: "list_connections", arguments: {} });
+        const connections = await client.callTool({
+          name: "list_connections",
+          arguments: { service: "example_auth" },
+        });
         expect(connections.structuredContent).toMatchObject({
           ok: true,
-          data: [{ service: "example_auth", connectionName: "secondary" }],
+          data: [{ connectionName: "secondary" }],
+        });
+        expect((connections.structuredContent as { data: unknown[] }).data).toHaveLength(1);
+        expect(JSON.stringify(connections.structuredContent)).not.toContain("Default Account");
+
+        const apps = await client.callTool({ name: "list_apps", arguments: {} });
+        expect(apps.structuredContent).toMatchObject({
+          ok: true,
+          data: [{ service: "example_auth" }],
+        });
+        expect(
+          (apps.structuredContent as { data: Array<{ connection?: { connectionName?: string } }> }).data[0]?.connection,
+        ).toBeUndefined();
+        expect(JSON.stringify(apps.structuredContent)).not.toContain("Default Account");
+
+        const omittedGuide = await client.callTool({
+          name: "get_action_guide",
+          arguments: { actionId: "example_auth.get_account" },
+        });
+        expect(omittedGuide.isError).toBe(true);
+        expect(omittedGuide.structuredContent).toMatchObject({
+          ok: false,
+          error: { code: "connection_not_allowed" },
         });
 
-        const forced = await client.callTool({
+        const hiddenGuide = await client.callTool({
+          name: "get_action_guide",
+          arguments: { actionId: "example_auth.get_account", connectionName: "default" },
+        });
+        expect(hiddenGuide.structuredContent).toEqual(omittedGuide.structuredContent);
+
+        const allowedGuide = await client.callTool({
+          name: "get_action_guide",
+          arguments: { actionId: "example_auth.get_account", connectionName: "secondary" },
+        });
+        expect(allowedGuide.structuredContent).toMatchObject({
+          ok: true,
+          data: { capability: { connection: { connectionName: "secondary" } } },
+        });
+
+        const omitted = await client.callTool({
           name: "execute_action",
           arguments: { actionId: "example_auth.get_account", input: {} },
         });
-        expect(forced.structuredContent).toMatchObject({
+        const hidden = await client.callTool({
+          name: "execute_action",
+          arguments: { actionId: "example_auth.get_account", input: {}, connectionName: "default" },
+        });
+        expect(omitted.structuredContent).toMatchObject({
+          ok: false,
+          error: { code: "connection_not_allowed" },
+        });
+        expect(hidden.structuredContent).toMatchObject({
+          ok: false,
+          error: { code: "connection_not_allowed" },
+        });
+
+        const allowed = await client.callTool({
+          name: "execute_action",
+          arguments: { actionId: "example_auth.get_account", input: {}, connectionName: "secondary" },
+        });
+        expect(allowed.structuredContent).toMatchObject({
           ok: true,
           data: { accountId: "account-secondary" },
           connection: { connectionName: "secondary" },
         });
 
-        const bypass = await client.callTool({
+        const grantedMissing = await client.callTool({
           name: "execute_action",
-          arguments: {
-            actionId: "example_auth.get_account",
-            input: {},
-            connectionName: "default",
-          },
+          arguments: { actionId: "example_auth.get_account", input: {}, connectionName: "ghost" },
         });
-        expect(bypass.structuredContent).toMatchObject({
+        expect(grantedMissing.structuredContent).toMatchObject({
           ok: false,
           error: { code: "connection_not_allowed" },
         });
       },
       new MemoryRunLogStore(),
       {
-        tokenId: "token-connection-scope",
-        allowedActions: ["example_auth.*"],
-        blockedActions: [],
-        allowedConnections: { example_auth: "secondary" },
-      },
-    );
-  });
-
-  it("enforces runtime-token action input constraints through MCP", async () => {
-    await withMcpClient(
-      async (client) => {
-        const denied = await client.callTool({
-          name: "execute_action",
-          arguments: {
-            actionId: "example.echo",
-            input: { message: "other" },
-          },
-        });
-        expect(denied.structuredContent).toMatchObject({
-          ok: false,
-          error: { code: "action_input_not_allowed" },
-        });
-
-        const allowed = await client.callTool({
-          name: "execute_action",
-          arguments: {
-            actionId: "example.echo",
-            input: { message: "expected" },
-          },
-        });
-        expect(allowed.structuredContent).toMatchObject({ ok: true });
-      },
-      {
+        getPolicySnapshot: async () => policy,
         runtimeGrant: {
-          tokenId: "token-input-scope",
-          allowedActions: ["example.*"],
+          tokenId: "token-1",
+          allowedActions: [],
           blockedActions: [],
-          actionInputConstraints: { "example.*": { message: "expected" } },
+          allowedProxies: [],
+          allowedConnections: ["connection-secondary", "connection-ghost"],
         },
       },
     );
   });
 });
 
+interface McpPolicyOptions {
+  getPolicySnapshot?(): Promise<ActionPolicySnapshot>;
+  runtimeGrant?: RuntimeGrant;
+}
+
+/** Default to an empty deployment policy scoped to the runtime grant, the way the server does without a store. */
+function policySnapshotFor(policy: McpPolicyOptions): () => Promise<ActionPolicySnapshot> {
+  return (
+    policy.getPolicySnapshot ??
+    (async () => new ActionPolicyService().createSnapshot(emptyPolicyRules(), policy.runtimeGrant))
+  );
+}
+
 async function withMcpClient(
   run: (client: Client) => Promise<void>,
-  policy: {
-    getPolicySnapshot?(): Promise<ActionPolicySnapshot>;
-    runtimeGrant?: {
-      tokenId: string;
-      allowedActions: string[];
-      blockedActions: string[];
-      actionInputConstraints?: Record<string, Record<string, string | number | boolean | null>>;
-    };
-  } = {},
+  policy: McpPolicyOptions & { signal?: AbortSignal; catalog?: CatalogStore } = {},
 ): Promise<void> {
-  const catalog = createCatalogStore([exampleProvider], {
-    executableActionIds: ["example.echo"],
-  });
+  const catalog =
+    policy.catalog ??
+    createCatalogStore([exampleProvider], {
+      executableActionIds: ["example.echo"],
+    });
   const providerLoader = new EchoProviderLoader();
   const connections = new ConnectionService({
     catalog,
@@ -570,10 +832,10 @@ async function withMcpClient(
   });
   const server = createMcpServer({
     catalog,
-    providerLoader,
     connections,
     actions,
     ...policy,
+    getPolicySnapshot: policySnapshotFor(policy),
   });
   const client = new Client({ name: "mcp-test", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -590,12 +852,7 @@ async function withMcpClient(
 async function withAuthenticatedMcpClient(
   run: (client: Client) => Promise<void>,
   runs = new MemoryRunLogStore(),
-  runtimeGrant?: {
-    tokenId: string;
-    allowedActions: string[];
-    blockedActions: string[];
-    allowedConnections?: Record<string, string | null>;
-  },
+  policy: McpPolicyOptions = {},
 ): Promise<void> {
   const catalog = createCatalogStore([authenticatedProvider], {
     executableActionIds: ["example_auth.get_account"],
@@ -607,12 +864,14 @@ async function withAuthenticatedMcpClient(
     store: new MemoryConnectionStore([
       {
         id: "connection-default",
+        revision: "revision-default",
         service: "example_auth",
         connectionName: "default",
         credential: defaultCredential,
       },
       {
         id: "connection-secondary",
+        revision: "revision-secondary",
         service: "example_auth",
         connectionName: "secondary",
         credential: secondaryCredential,
@@ -620,7 +879,13 @@ async function withAuthenticatedMcpClient(
     ]),
   });
   const actions = new ActionRunner({ catalog, providerLoader, connections, runs });
-  const server = createMcpServer({ catalog, providerLoader, connections, actions, runtimeGrant });
+  const server = createMcpServer({
+    catalog,
+    connections,
+    actions,
+    ...policy,
+    getPolicySnapshot: policySnapshotFor(policy),
+  });
   const client = new Client({ name: "mcp-test", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -659,6 +924,10 @@ class EchoProviderLoader implements IProviderLoader {
 class MemoryConnectionStore implements IConnectionStore {
   private readonly connections = new Map<string, StoredConnection>();
 
+  async getById(id: string): Promise<StoredConnection | undefined> {
+    return [...this.connections.values()].find((connection) => connection.id === id);
+  }
+
   constructor(connections: StoredConnection[] = []) {
     for (const connection of connections) {
       this.connections.set(this.key(connection.service, connection.connectionName), connection);
@@ -669,10 +938,33 @@ class MemoryConnectionStore implements IConnectionStore {
     return this.connections.get(this.key(service, connectionName));
   }
 
-  async set(service: string, connectionName: string, credential: ResolvedCredential): Promise<StoredConnection> {
+  private readonly retirementGenerations = new Map<string, string>();
+
+  async getRetirementGeneration(service: string, connectionName: string): Promise<string> {
+    const key = JSON.stringify([service, connectionName]);
+    let generation = this.retirementGenerations.get(key);
+    if (!generation) {
+      generation = crypto.randomUUID();
+      this.retirementGenerations.set(key, generation);
+    }
+    return generation;
+  }
+
+  async setIfCurrentGeneration(
+    service: string,
+    connectionName: string,
+    credential: ResolvedCredential,
+    retirementGeneration: string,
+  ) {
+    if ((await this.getRetirementGeneration(service, connectionName)) !== retirementGeneration) return undefined;
+    return this.set(service, connectionName, credential);
+  }
+
+  async set(service: string, connectionName: string, credential: ResolvedCredential) {
     const key = this.key(service, connectionName);
     const connection = {
       id: this.connections.get(key)?.id ?? crypto.randomUUID(),
+      revision: crypto.randomUUID(),
       service,
       connectionName,
       credential,
@@ -683,12 +975,14 @@ class MemoryConnectionStore implements IConnectionStore {
 
   async updateCredential(connection: StoredConnection): Promise<boolean> {
     const key = this.key(connection.service, connection.connectionName);
-    if (this.connections.get(key)?.id !== connection.id) return false;
-    this.connections.set(key, connection);
+    const current = this.connections.get(key);
+    if (current?.id !== connection.id || current.revision !== connection.revision) return false;
+    this.connections.set(key, { ...connection, revision: crypto.randomUUID() });
     return true;
   }
 
   async delete(service: string, connectionName: string): Promise<void> {
+    this.retirementGenerations.set(JSON.stringify([service, connectionName]), crypto.randomUUID());
     this.connections.delete(this.key(service, connectionName));
   }
 

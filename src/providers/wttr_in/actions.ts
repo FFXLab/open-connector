@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "wttr_in" as const;
+const service = "wttr_in";
 
 const numericWeatherFieldSchema = s.nullable(
   s.number("The numeric weather value after parsing the wttr.in string field."),
@@ -62,11 +62,10 @@ const forecastDaySchema = s.object("A normalized wttr.in daily forecast summary.
   astronomy: astronomySchema,
 });
 
-export type WttrInActionName = "get_weather";
-
 export const wttrInActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "get_weather",
+    operationType: "read",
     description: "Get current weather and forecast from wttr.in as JSON.",
     requiredScopes: [],
     inputSchema: s.object(

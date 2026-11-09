@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "square" as const;
+const service = "square";
 
 const nonEmptyString = (description: string) => s.string(description, { minLength: 1 });
 const cursorSchema = nonEmptyString("Cursor token returned by a previous Square page.");
@@ -180,17 +180,10 @@ const customerOutputSchema = s.object("Square customer response.", {
   customer: squareCustomerSchema,
 });
 
-export type SquareActionName =
-  | "list_locations"
-  | "list_customers"
-  | "get_customer"
-  | "create_customer"
-  | "update_customer"
-  | "search_customers";
-
 export const squareActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "list_locations",
+    operationType: "read",
     description: "List Square seller locations for the connected access token.",
     requiredScopes: [],
     inputSchema: emptyInputSchema,
@@ -198,6 +191,7 @@ export const squareActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_customers",
+    operationType: "read",
     description: "List Square customer profiles with cursor pagination.",
     requiredScopes: [],
     inputSchema: listCustomersInputSchema,
@@ -205,6 +199,7 @@ export const squareActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_customer",
+    operationType: "read",
     description: "Retrieve one Square customer profile by ID.",
     requiredScopes: [],
     inputSchema: getCustomerInputSchema,
@@ -212,6 +207,7 @@ export const squareActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_customer",
+    operationType: "write",
     description: "Create a Square customer profile.",
     requiredScopes: [],
     inputSchema: createCustomerInputSchema,
@@ -219,6 +215,7 @@ export const squareActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "update_customer",
+    operationType: "write",
     description: "Update a Square customer profile by ID.",
     requiredScopes: [],
     inputSchema: updateCustomerInputSchema,
@@ -226,13 +223,10 @@ export const squareActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "search_customers",
+    operationType: "read",
     description: "Search Square customer profiles with supported Square filters.",
     requiredScopes: [],
     inputSchema: searchCustomersInputSchema,
     outputSchema: customerPageOutputSchema,
   }),
 ];
-
-export const squareActionByName: ReadonlyMap<string, ActionDefinition> = new Map(
-  squareActions.map((action) => [action.name, action]),
-);

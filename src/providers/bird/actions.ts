@@ -5,7 +5,6 @@ import { defineProviderAction } from "../../core/provider-definition.ts";
 
 const service = "bird";
 
-const nonEmptyStringSchema = (description: string) => s.string(description, { minLength: 1, pattern: "\\S" });
 const workspaceIdSchema = s.uuid("The Bird workspace ID.");
 const channelIdSchema = s.uuid("The Bird channel ID.");
 const messageIdSchema = s.uuid("The Bird channel message ID.");
@@ -30,8 +29,8 @@ const contactAttributesSchema = s.record(
   s.unknown("A Bird contact attribute value."),
 );
 const contactIdentifierSchema = s.object("A Bird contact identifier.", {
-  key: nonEmptyStringSchema("The Bird contact identifier key, such as emailaddress or phonenumber."),
-  value: nonEmptyStringSchema("The Bird contact identifier value."),
+  key: s.nonWhitespaceString("The Bird contact identifier key, such as emailaddress or phonenumber."),
+  value: s.nonWhitespaceString("The Bird contact identifier value."),
 });
 const contactListIdsSchema = s.array("Bird contact list IDs.", s.uuid("A Bird contact list ID."), {
   minItems: 1,
@@ -50,7 +49,7 @@ const createMessageSchema = s.object(
     body: messageBodySchema,
     template: templateSchema,
     sender: senderSchema,
-    reference: nonEmptyStringSchema("A caller-defined message reference."),
+    reference: s.nonWhitespaceString("A caller-defined message reference."),
     meta: metadataSchema,
     replyTo: rawObjectSchema,
     notification: rawObjectSchema,
@@ -58,7 +57,7 @@ const createMessageSchema = s.object(
     enableLinkTracking: s.boolean("Whether Bird should append UTM parameters to links."),
     ignoreQuietHours: s.boolean("Whether to ignore quiet hours settings."),
     ignoreGlobalHoldout: s.boolean("Whether to skip global holdout checks."),
-    tags: s.array("Tags to associate with the message.", nonEmptyStringSchema("A Bird message tag."), {
+    tags: s.array("Tags to associate with the message.", s.nonWhitespaceString("A Bird message tag."), {
       minItems: 1,
       maxItems: 10,
     }),
@@ -89,23 +88,10 @@ const createMessageSchema = s.object(
   },
 );
 
-export type BirdActionName =
-  | "list_channels"
-  | "get_channel"
-  | "get_message"
-  | "list_message_interactions"
-  | "send_message"
-  | "send_batch_messages"
-  | "list_contacts"
-  | "get_contact"
-  | "search_contact_by_identifier"
-  | "create_contact"
-  | "update_contact"
-  | "delete_contact";
-
 export const birdActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "list_channels",
+    operationType: "read",
     description: "List channels configured for a Bird workspace with optional filters.",
     requiredScopes: [],
     inputSchema: s.object(
@@ -116,9 +102,9 @@ export const birdActions: ActionDefinition[] = [
           minimum: 1,
           maximum: 1000,
         }),
-        pageToken: nonEmptyStringSchema("The pagination token returned by a previous request."),
+        pageToken: s.nonWhitespaceString("The pagination token returned by a previous request."),
         reverse: s.boolean("Whether to reverse the order in which channels are returned."),
-        platform: nonEmptyStringSchema("Filter channels by platform name."),
+        platform: s.nonWhitespaceString("Filter channels by platform name."),
         conferencial: s.boolean("Filter channels by Bird's conferencial flag."),
         onlyMyChannels: s.boolean("Only return channels the authenticated principal can access."),
         useCaseType: useCaseTypeSchema,
@@ -128,7 +114,7 @@ export const birdActions: ActionDefinition[] = [
         }),
         resourceOwnerIdentifiers: s.array(
           "Filter channels by resource owner identifiers.",
-          nonEmptyStringSchema("A Bird resource owner identifier."),
+          s.nonWhitespaceString("A Bird resource owner identifier."),
           { minItems: 1 },
         ),
         suite: suiteSchema,
@@ -162,6 +148,7 @@ export const birdActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_channel",
+    operationType: "read",
     description: "Retrieve a specific Bird workspace channel by ID.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for retrieving a Bird channel.", {
@@ -177,6 +164,7 @@ export const birdActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_message",
+    operationType: "read",
     description: "Retrieve a Bird channel message by ID.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for retrieving a Bird channel message.", {
@@ -193,6 +181,7 @@ export const birdActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_message_interactions",
+    operationType: "read",
     description: "List interactions recorded for a Bird channel message.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for listing Bird message interactions.", {
@@ -210,6 +199,7 @@ export const birdActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "send_message",
+    operationType: "write",
     description: "Send one message through a Bird workspace channel.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for sending a Bird channel message.", {
@@ -227,6 +217,7 @@ export const birdActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "send_batch_messages",
+    operationType: "write",
     description:
       "Send a batch of up to 100 messages through a Bird workspace channel and return the accepted batch IDs.",
     requiredScopes: [],
@@ -249,6 +240,7 @@ export const birdActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_contacts",
+    operationType: "read",
     description: "List contacts in a Bird workspace.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for listing Bird contacts.", {
@@ -264,6 +256,7 @@ export const birdActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_contact",
+    operationType: "read",
     description: "Retrieve a Bird contact by ID, optionally requesting specific attributes.",
     requiredScopes: [],
     inputSchema: s.object(
@@ -271,7 +264,7 @@ export const birdActions: ActionDefinition[] = [
       {
         workspaceId: workspaceIdSchema,
         contactId: contactIdSchema,
-        attribute: nonEmptyStringSchema("A contact attribute name to include in the response."),
+        attribute: s.nonWhitespaceString("A contact attribute name to include in the response."),
       },
       { optional: ["attribute"] },
     ),
@@ -284,6 +277,7 @@ export const birdActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "search_contact_by_identifier",
+    operationType: "read",
     description: "Search Bird contacts by an identifier key and value.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for searching Bird contacts by identifier.", {
@@ -300,6 +294,7 @@ export const birdActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_contact",
+    operationType: "write",
     description: "Create a Bird contact with identifiers, attributes, display name, or list IDs.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for creating a Bird contact.", {
@@ -307,7 +302,7 @@ export const birdActions: ActionDefinition[] = [
       contact: s.object(
         "The Bird contact fields to create.",
         {
-          displayName: nonEmptyStringSchema("The display name for the Bird contact."),
+          displayName: s.nonWhitespaceString("The display name for the Bird contact."),
           identifiers: s.array("Identifiers to attach to the contact.", contactIdentifierSchema, {
             minItems: 1,
           }),
@@ -326,6 +321,7 @@ export const birdActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "update_contact",
+    operationType: "write",
     description: "Update a Bird contact's identifiers, attributes, or list memberships.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for updating a Bird contact.", {
@@ -352,6 +348,7 @@ export const birdActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "delete_contact",
+    operationType: "destructive",
     description: "Delete a Bird contact by ID.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for deleting a Bird contact.", {

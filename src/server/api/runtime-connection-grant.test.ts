@@ -8,6 +8,7 @@ function grant(allowedConnections: Record<string, string | null>): RuntimeGrant 
     tokenId: "token-1",
     allowedActions: ["*"],
     blockedActions: [],
+    allowedProxies: [],
     allowedConnections,
   };
 }

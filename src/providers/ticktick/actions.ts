@@ -80,6 +80,7 @@ const createTaskInput = s.object(
     priority,
     sortOrder: s.integer("The TickTick task sort order."),
     items: s.array("Checklist items to create under the task.", checklistItemInput),
+    tags: s.stringArray("Task tags."),
   },
   {
     optional: [
@@ -94,6 +95,7 @@ const createTaskInput = s.object(
       "priority",
       "sortOrder",
       "items",
+      "tags",
     ],
   },
 );
@@ -104,24 +106,11 @@ const updateTaskInput = s.object(
     id: s.string("Optional task ID repeated in the request body."),
     ...(createTaskInput.properties as Record<string, unknown> as Record<string, ReturnType<typeof s.string>>),
   },
-  {
-    optional: [
-      "id",
-      "title",
-      "content",
-      "desc",
-      "isAllDay",
-      "startDate",
-      "dueDate",
-      "timeZone",
-      "reminders",
-      "repeatFlag",
-      "priority",
-      "sortOrder",
-      "items",
-    ],
-  },
+  { required: ["taskId", "projectId"] },
 );
+const batchCreateTasksInput = s.object("TickTick batch create-task input.", {
+  tasks: s.array("The TickTick tasks to create.", createTaskInput, { minItems: 1, maxItems: 50 }),
+});
 const completedFilterInput = s.object(
   "TickTick completed-task filter input.",
   {
@@ -144,31 +133,10 @@ const filterTasksInput = s.object(
   { optional: ["projectIds", "startDate", "endDate", "priority", "tag", "status"] },
 );
 
-export type TicktickActionName =
-  | "get_user_project"
-  | "get_project_by_id"
-  | "get_project_with_data"
-  | "create_project"
-  | "update_project"
-  | "delete_project"
-  | "get_task_by_project_and_id"
-  | "create_task"
-  | "create_task2"
-  | "update_task"
-  | "complete_task"
-  | "delete_task"
-  | "list_all_tasks"
-  | "list_completed_tasks"
-  | "filter_tasks"
-  | "move_tasks"
-  | "list_habits"
-  | "get_habit"
-  | "create_or_update_habit_checkin"
-  | "list_habit_checkins";
-
 export const ticktickActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "get_user_project",
+    operationType: "read",
     description: "List the projects available to the connected TickTick account.",
     requiredScopes: readScope,
     inputSchema: noInput,
@@ -176,6 +144,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_project_by_id",
+    operationType: "read",
     description: "Get a TickTick project by its project ID.",
     requiredScopes: readScope,
     inputSchema: projectLookup,
@@ -183,6 +152,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_project_with_data",
+    operationType: "read",
     description: "Get a TickTick project together with its undone tasks and columns.",
     requiredScopes: readScope,
     inputSchema: projectLookup,
@@ -194,6 +164,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_project",
+    operationType: "write",
     description: "Create a TickTick project.",
     requiredScopes: writeScope,
     inputSchema: s.object(projectMutationInput.properties as Record<string, ReturnType<typeof s.string>>, {
@@ -204,6 +175,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "update_project",
+    operationType: "write",
     description: "Update a TickTick project by project ID.",
     requiredScopes: writeScope,
     inputSchema: s.object(projectMutationInput.properties as Record<string, ReturnType<typeof s.string>>, {
@@ -214,6 +186,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "delete_project",
+    operationType: "destructive",
     description: "Delete a TickTick project by project ID.",
     requiredScopes: writeScope,
     inputSchema: projectLookup,
@@ -221,6 +194,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_task_by_project_and_id",
+    operationType: "read",
     description: "Get a TickTick task by project ID and task ID.",
     requiredScopes: readScope,
     inputSchema: taskLookup,
@@ -228,6 +202,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_task",
+    operationType: "write",
     description: "Create a TickTick task under a project.",
     requiredScopes: writeScope,
     inputSchema: createTaskInput,
@@ -235,13 +210,26 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_task2",
+    operationType: "write",
     description: "Deprecated compatibility alias for create_task.",
     requiredScopes: writeScope,
     inputSchema: createTaskInput,
     outputSchema: s.object({ task }),
   }),
   defineProviderAction(service, {
+    name: "batch_add_tasks",
+    operationType: "write",
+    description: "Batch create multiple TickTick tasks in one request.",
+    requiredScopes: writeScope,
+    inputSchema: batchCreateTasksInput,
+    outputSchema: s.object({
+      tasks: s.array("The created TickTick tasks.", task),
+      createdCount: s.integer("The number of tasks created."),
+    }),
+  }),
+  defineProviderAction(service, {
     name: "update_task",
+    operationType: "write",
     description: "Update a TickTick task by task ID and project ID.",
     requiredScopes: writeScope,
     inputSchema: updateTaskInput,
@@ -249,6 +237,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "complete_task",
+    operationType: "write",
     description: "Mark a TickTick task as completed.",
     requiredScopes: writeScope,
     inputSchema: taskLookup,
@@ -260,6 +249,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "delete_task",
+    operationType: "destructive",
     description: "Delete a TickTick task by project ID and task ID.",
     requiredScopes: writeScope,
     inputSchema: taskLookup,
@@ -271,6 +261,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_all_tasks",
+    operationType: "read",
     description: "List undone TickTick tasks across projects.",
     requiredScopes: readScope,
     inputSchema: s.object(
@@ -289,6 +280,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_completed_tasks",
+    operationType: "read",
     description: "List completed TickTick tasks.",
     requiredScopes: readScope,
     inputSchema: completedFilterInput,
@@ -296,6 +288,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "filter_tasks",
+    operationType: "read",
     description: "Filter TickTick tasks by project, date range, priority, tags, and status.",
     requiredScopes: readScope,
     inputSchema: filterTasksInput,
@@ -303,6 +296,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "move_tasks",
+    operationType: "write",
     description: "Move one or more TickTick tasks between projects.",
     requiredScopes: writeScope,
     inputSchema: s.object({
@@ -320,6 +314,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_habits",
+    operationType: "read",
     description: "List habits available to the connected TickTick account.",
     requiredScopes: readScope,
     inputSchema: noInput,
@@ -327,6 +322,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_habit",
+    operationType: "read",
     description: "Get a TickTick habit by its habit ID.",
     requiredScopes: readScope,
     inputSchema: s.object({ habitId }),
@@ -334,6 +330,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_or_update_habit_checkin",
+    operationType: "write",
     description: "Create or update a TickTick habit check-in for a date stamp.",
     requiredScopes: writeScope,
     inputSchema: s.object(
@@ -352,6 +349,7 @@ export const ticktickActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_habit_checkins",
+    operationType: "read",
     description: "List TickTick habit check-ins over a date stamp range.",
     requiredScopes: readScope,
     inputSchema: s.object({

@@ -1,8 +1,8 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
-import type { RaiselyActionName } from "./actions.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
-import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { optionalRecord, optionalString, optionalStringArray, requiredString } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortSignalError,
@@ -13,12 +13,10 @@ import {
 
 export const raiselyApiBaseUrl = "https://api.raisely.com/v3";
 
-const raiselyRequestTimeoutMs = 30_000;
-
 type RaiselyRequestMethod = "GET" | "POST" | "PATCH" | "DELETE";
 type RaiselyActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
-export const raiselyActionHandlers: Record<RaiselyActionName, RaiselyActionHandler> = {
+export const raiselyActionHandlers: ProviderActionHandlers<"raisely", RaiselyActionHandler> = {
   async list_campaigns(input, context) {
     return normalizeCollection(
       await requestRaiselyJson({
@@ -258,7 +256,7 @@ async function fetchRaiselyJson(
   init: RequestInit,
 ): Promise<RaiselyJsonResponse> {
   init.signal?.throwIfAborted();
-  const timeout = createProviderTimeout(init.signal ?? undefined, raiselyRequestTimeoutMs);
+  const timeout = createProviderTimeout(init.signal ?? undefined);
   try {
     const response = await fetcher(url, { ...init, signal: timeout.signal });
     return {
@@ -370,11 +368,4 @@ function readErrorMessage(payload: Record<string, unknown>): string | undefined 
     optionalString(payload.error) ??
     optionalString(optionalRecord(payload.error)?.message)
   );
-}
-
-function optionalStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-    return undefined;
-  }
-  return value;
 }

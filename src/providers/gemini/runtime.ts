@@ -1,19 +1,23 @@
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { compactObject, optionalInteger, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
-import { jsonObject } from "../../core/request.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { jsonObject, readBoundedResponseBytes } from "../../core/request.ts";
+import {
+  isAbortLikeError,
+  providerUserAgent,
+  ProviderRequestError,
+  defaultProviderRequestTimeoutMs,
+} from "../provider-runtime.ts";
 
 export const geminiApiBaseUrl = "https://generativelanguage.googleapis.com/v1beta";
 export const geminiDefaultTextModel = "gemini-2.5-flash";
 export const geminiDefaultEmbeddingModel = "text-embedding-004";
-export const geminiDefaultTokenCountModel = "gemini-2.0-flash";
+export const geminiDefaultTokenCountModel = "gemini-3.6-flash";
 export const geminiDefaultImageModel = "gemini-3-pro-image-preview";
 export const geminiDefaultVideoModel = "veo-3.0-generate-001";
 export const geminiDefaultVideoPollIntervalMs = 10_000;
 export const geminiDefaultVideoMaxWaitMs: number = 12 * 60_000;
 export const geminiDefaultRequestTimeoutMs = 10_000;
-export const geminiDefaultLongRunningRequestTimeoutMs = 30_000;
 
 type GeminiErrorMode = "validate" | "execute";
 
@@ -305,7 +309,7 @@ export async function generateGeminiImage(
     },
     context,
     "generate_image",
-    resolveGeminiTimeoutMs(input.timeout, geminiDefaultLongRunningRequestTimeoutMs),
+    resolveGeminiTimeoutMs(input.timeout, defaultProviderRequestTimeoutMs),
   );
 
   await assertGeminiResponse(response, "execute", "generate_image");
@@ -360,7 +364,7 @@ export async function generateGeminiVideos(
     },
     context,
     "generate_videos",
-    geminiDefaultLongRunningRequestTimeoutMs,
+    defaultProviderRequestTimeoutMs,
   );
 
   await assertGeminiResponse(response, "execute", "generate_videos");
@@ -462,7 +466,7 @@ async function fetchGeminiVideoOperation(
     },
     context,
     "get_videos_operation",
-    geminiDefaultLongRunningRequestTimeoutMs,
+    defaultProviderRequestTimeoutMs,
   );
 
   await assertGeminiResponse(response, "execute", "get_videos_operation");
@@ -642,8 +646,12 @@ async function fetchGemini(
 
 async function downloadMediaBytes(
   url: string,
-  context: Pick<GeminiRuntimeContext, "apiKey" | "fetcher" | "signal">,
+  context: Pick<GeminiRuntimeContext, "apiKey" | "fetcher" | "signal" | "transitFiles">,
 ): Promise<GeminiDownloadedMedia> {
+  if (!context.transitFiles) {
+    throw new ProviderRequestError(502, "gemini media actions require server-side file transit");
+  }
+
   const headers: Record<string, string> = {
     "user-agent": providerUserAgent,
   };
@@ -658,7 +666,7 @@ async function downloadMediaBytes(
     },
     context,
     "media download",
-    geminiDefaultLongRunningRequestTimeoutMs,
+    defaultProviderRequestTimeoutMs,
   );
 
   if (!response.ok) {
@@ -667,7 +675,11 @@ async function downloadMediaBytes(
   }
 
   return {
-    bytes: new Uint8Array(await response.arrayBuffer()),
+    bytes: await readBoundedResponseBytes(response, {
+      maxBytes: context.transitFiles.maxBytes,
+      fieldName: "Gemini media download",
+      createError: (message) => new ProviderRequestError(413, message),
+    }),
     mimeType: response.headers.get("content-type") ?? undefined,
   };
 }
@@ -690,10 +702,6 @@ function shouldSendGeminiApiKey(url: string): boolean {
 
 function isGoogleHost(hostname: string): boolean {
   return hostname === "googleapis.com" || hostname.endsWith(".googleapis.com");
-}
-
-function isAbortLikeError(error: unknown): boolean {
-  return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
 }
 
 async function createTransitDownloadableFile(

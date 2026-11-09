@@ -46,6 +46,22 @@ export function optionalRawString(value: unknown): string | undefined {
 }
 
 /**
+ * Return a string exactly as provided, including empty strings and surrounding whitespace, or throw.
+ */
+export function requiredRawString(
+  value: unknown,
+  fieldName: string,
+  createError: CastErrorFactory = (message) => new CastError(message),
+): string {
+  const result = optionalRawString(value);
+  if (result !== undefined) {
+    return result;
+  }
+
+  throw createError(`${fieldName} must be a string`);
+}
+
+/**
  * Return a string or throw a caller-provided error. Examples:
  * `requiredString(" x ", "name") => "x"`, `requiredString("", "name")` throws.
  */
@@ -60,6 +76,23 @@ export function requiredString(
   }
 
   throw createError(`${fieldName} is required.`);
+}
+
+/**
+ * Return a finite number or throw a caller-provided error. Examples:
+ * `requiredNumber(1.5, "weight") => 1.5`; `requiredNumber("x", "weight")` throws.
+ */
+export function requiredNumber(
+  value: unknown,
+  fieldName: string,
+  createError: CastErrorFactory = (message) => new CastError(message),
+): number {
+  const result = optionalNumber(value);
+  if (result !== undefined) {
+    return result;
+  }
+
+  throw createError(`${fieldName} must be a number`);
 }
 
 /**
@@ -163,6 +196,14 @@ export function requiredStringArray(
 }
 
 /**
+ * Return an array only when every item is already a string. Invalid or absent
+ * values return undefined.
+ */
+export function optionalStringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : undefined;
+}
+
+/**
  * Return every array item as a plain object record, or throw. Examples:
  * `objectArray([{ a: 1 }], "items") => [{ a: 1 }]`, `objectArray([1], "items")` throws.
  */
@@ -222,15 +263,31 @@ export function optionalNumber(value: unknown): number | undefined {
 }
 
 /**
+ * Return a finite number from a number or numeric string when present. Examples:
+ * `optionalNumberLike("1.5") => 1.5`, `optionalNumberLike("x") => undefined`.
+ *
+ * A blank or whitespace-only string is reported as missing rather than parsed, because
+ * `Number(" ")` is `0` and a blank field would otherwise surface as a real zero.
+ */
+export function optionalNumberLike(value: unknown): number | undefined {
+  const parsed =
+    typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
  * Return an integer from a number or numeric string. Examples:
  * `integer("2", "count") => 2`, `integer("x", "count")` throws.
+ *
+ * A blank or whitespace-only string is rejected rather than parsed as zero.
  */
 export function integer(
   value: unknown,
   fieldName: string,
   createError: CastErrorFactory = (message) => new CastError(message),
 ): number {
-  const parsed = typeof value === "number" ? value : typeof value === "string" && value !== "" ? Number(value) : NaN;
+  const parsed =
+    typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
   if (Number.isInteger(parsed)) {
     return parsed;
   }
@@ -241,13 +298,16 @@ export function integer(
 /**
  * Return an integer from a number or numeric string when present. Examples:
  * `optionalIntegerLike("2", "count") => 2`, `optionalIntegerLike("", "count") => undefined`.
+ *
+ * A blank or whitespace-only string is reported as missing rather than parsed, because
+ * `Number(" ")` is `0` and a blank field would otherwise surface as a real zero.
  */
 export function optionalIntegerLike(
   value: unknown,
   fieldName: string,
   createError: CastErrorFactory = (message) => new CastError(message),
 ): number | undefined {
-  if (value == null || value === "") {
+  if (value == null || (typeof value === "string" && value.trim() === "")) {
     return undefined;
   }
 
@@ -268,6 +328,22 @@ export function nullableInteger(value: unknown): number | null | undefined {
  */
 export function optionalBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+/**
+ * Return a boolean or throw a caller-provided error.
+ */
+export function requiredBoolean(
+  value: unknown,
+  fieldName: string,
+  createError: CastErrorFactory = (message) => new CastError(message),
+): boolean {
+  const result = optionalBoolean(value);
+  if (result !== undefined) {
+    return result;
+  }
+
+  throw createError(`${fieldName} must be a boolean`);
 }
 
 /**
@@ -344,6 +420,22 @@ export function nullableString(value: unknown): string | null | undefined {
 }
 
 /**
+ * Return a string exactly as provided, null, or undefined when the value is not a string. Examples:
+ * `nullableRawString(null) => null`, `nullableRawString("") => ""`, `nullableRawString(1) => undefined`.
+ */
+export function nullableRawString(value: unknown): string | null | undefined {
+  return value === null ? null : optionalRawString(value);
+}
+
+/**
+ * Return a boolean, null, or undefined when the value is not a boolean. Examples:
+ * `nullableBoolean(null) => null`, `nullableBoolean(false) => false`, `nullableBoolean("true") => undefined`.
+ */
+export function nullableBoolean(value: unknown): boolean | null | undefined {
+  return value === null ? null : optionalBoolean(value);
+}
+
+/**
  * Return a string or null when the value is not a string.
  */
 export function optionalStringOrNull(value: unknown): string | null {
@@ -351,13 +443,17 @@ export function optionalStringOrNull(value: unknown): string | null {
 }
 
 /**
- * Return an integer from an integer number or numeric string, or null.
+ * Return an integer from an integer number or numeric string, or null. Examples:
+ * `optionalIntegerOrNull("2") => 2`, `optionalIntegerOrNull("") => null`.
+ *
+ * A blank string is reported as missing rather than parsed, because `Number("")`
+ * is `0` and an empty field would otherwise reach a provider as a real zero.
  */
 export function optionalIntegerOrNull(value: unknown): number | null {
   if (Number.isInteger(value)) {
     return value as number;
   }
-  if (typeof value === "string") {
+  if (typeof value === "string" && value.trim() !== "") {
     const parsed = Number(value);
     return Number.isInteger(parsed) ? parsed : null;
   }
@@ -384,4 +480,46 @@ export function positiveInteger(
   }
 
   throw createError(`${fieldName} must be a positive integer`);
+}
+
+/**
+ * Return the value when it is an array, otherwise an empty array. Example:
+ * `looseArray([1]) => [1]`, `looseArray("x") => []`.
+ */
+export function looseArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/**
+ * Return a string exactly as provided, or `null` for any other value. Examples:
+ * `rawStringOrNull("") => ""`, `rawStringOrNull(1) => null`.
+ */
+export function rawStringOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/**
+ * Return a plain object record, or an empty record for any other value. Example:
+ * `recordOrEmpty([]) => {}`.
+ */
+export function recordOrEmpty(value: unknown): Record<string, unknown> {
+  return optionalRecord(value) ?? {};
+}
+
+/**
+ * Return a boolean rendered as `"true"` / `"false"` for query parameters, or
+ * undefined for any other value.
+ */
+export function booleanString(value: unknown): string | undefined {
+  return typeof value === "boolean" ? String(value) : undefined;
+}
+
+/** Require an array while preserving provider-defined element shapes. */
+export function requiredArray(
+  value: unknown,
+  fieldName: string,
+  createError: CastErrorFactory = (message) => new CastError(message),
+): unknown[] {
+  if (!Array.isArray(value)) throw createError(`${fieldName} must be an array`);
+  return value;
 }

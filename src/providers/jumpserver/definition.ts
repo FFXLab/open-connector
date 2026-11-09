@@ -24,7 +24,7 @@ export const provider: ProviderDefinition = {
           secret: false,
           placeholder: "https://jumpserver-mcp.example.com/sse",
           description:
-            "The SSE endpoint of the official jumpserver/mcp server. Public HTTPS endpoints are supported by default. Private-network, Tailscale, and NetBird endpoints require OOMOL_CONNECT_ALLOW_PRIVATE_NETWORK. Loopback endpoints remain blocked. See https://github.com/jumpserver/mcp.",
+            "The SSE endpoint exposed by the official jumpserver/mcp server. Its default path is /sse. Public HTTPS endpoints are supported by default. Private-network, Tailscale, and NetBird endpoints require OOMOL_CONNECT_ALLOW_PRIVATE_NETWORK. Loopback endpoints remain blocked. See https://github.com/jumpserver/mcp.",
         },
         {
           key: "token",

@@ -1,20 +1,21 @@
-import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
-import type { ApiKeyProviderContext } from "../provider-runtime.ts";
-import type { OpenAiActionName } from "./actions.ts";
+import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
 
 import { Buffer } from "node:buffer";
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
 import { assertPublicHttpUrl, encodePathSegment, readBoundedResponseBytes } from "../../core/request.ts";
+import { defineApiKeyProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
 import {
   createProviderTimeout,
-  defineApiKeyProviderExecutors,
   isAbortLikeError,
   ProviderRequestError,
   providerUserAgent,
 } from "../provider-runtime.ts";
 
 interface UploadSource {
-  bytes: Uint8Array;
+  bytes: Uint8Array<ArrayBuffer>;
   fileName: string;
   mimeType: string;
 }
@@ -34,9 +35,8 @@ type OpenAiActionHandler = (input: Record<string, unknown>, context: OpenAiActio
 const service = "openai";
 const openaiApiBaseUrl = "https://api.openai.com/v1";
 const openaiAudioSourceMaxBytes = 25 * 1024 * 1024;
-const openaiAudioSourceFetchTimeoutMs = 30_000;
 
-export const openaiActionHandlers: Record<OpenAiActionName, OpenAiActionHandler> = {
+export const openaiActionHandlers: ProviderActionHandlers<"openai", OpenAiActionHandler> = {
   list_models(_input, context) {
     return openaiListModels(context);
   },
@@ -85,6 +85,16 @@ export const openaiActionHandlers: Record<OpenAiActionName, OpenAiActionHandler>
 };
 
 export const executors: ProviderExecutors = defineApiKeyProviderExecutors(service, openaiActionHandlers);
+
+export const proxy: ProviderProxyExecutor = defineProviderProxy({
+  service,
+  baseUrl: openaiApiBaseUrl,
+  auth: { type: "api_key_authorization", prefix: "Bearer " },
+  skipDnsValidation: true,
+  customizeRequest({ headers }) {
+    headers.set("accept", "application/json");
+  },
+});
 
 export const credentialValidators: CredentialValidators = {
   async apiKey(input, { fetcher }) {
@@ -490,7 +500,7 @@ async function buildOpenAiAudioFormData(
 ): Promise<FormData> {
   const source = await resolveAudioUploadSource(input, context);
   const formData = new FormData();
-  formData.set("file", new File([Buffer.from(source.bytes)], source.fileName, { type: source.mimeType }));
+  formData.set("file", new File([source.bytes], source.fileName, { type: source.mimeType }));
 
   for (const [key, value] of Object.entries(input)) {
     if (key === "file" || value === undefined || value === null) {
@@ -561,7 +571,7 @@ async function fetchPublicAudioUrl(
   context: Pick<OpenAiActionContext, "fetcher" | "signal">,
 ): Promise<Response> {
   assertPublicAudioUrl(url);
-  const timeout = createProviderTimeout(context.signal, openaiAudioSourceFetchTimeoutMs);
+  const timeout = createProviderTimeout(context.signal);
   let response: Response;
   try {
     response = await context.fetcher(url, { signal: timeout.signal });
@@ -610,7 +620,7 @@ function appendMultipartField(formData: FormData, key: string, value: unknown): 
   formData.append(key, JSON.stringify(value));
 }
 
-function decodeBase64Content(value: string, fieldName: string): Uint8Array {
+function decodeBase64Content(value: string, fieldName: string): Uint8Array<ArrayBuffer> {
   try {
     const bytes = Buffer.from(value, "base64");
     if (bytes.length === 0) {

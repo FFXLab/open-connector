@@ -52,6 +52,8 @@ export function policyRulesFromEditorDraft(draft: PolicyEditorDraft): PolicyRule
     blockedActions: [...draft.rules.blockedActions],
     allowedProxies: draft.proxyAllowMode === "restricted" ? [...draft.rules.allowedProxies] : [],
     blockedProxies: [...draft.rules.blockedProxies],
+    allowedTriggers: [...(draft.rules.allowedTriggers ?? [])],
+    blockedTriggers: [...(draft.rules.blockedTriggers ?? [])],
   };
 }
 
@@ -84,10 +86,10 @@ export function validatePolicyEditorDraft(draft: PolicyEditorDraft, includeProxi
       : []),
   ];
   for (const [field, resource] of fields) {
-    if (rules[field].length > 128) {
+    if ((rules[field] ?? []).length > 128) {
       issues.push({ field, code: "too_many" });
     }
-    for (const rule of rules[field]) {
+    for (const rule of rules[field] ?? []) {
       const code = policyRuleIssue(rule, resource);
       if (code) {
         issues.push({ field, code, rule });
@@ -108,7 +110,7 @@ export function policyLayers(policy: RuntimePolicyState, token?: RuntimeTokenSum
       rules: {
         allowedActions: token.allowedActions,
         blockedActions: token.blockedActions,
-        allowedProxies: [],
+        allowedProxies: token.allowedProxies,
         blockedProxies: [],
       },
     });
@@ -126,7 +128,9 @@ export function evaluatePolicy(value: string, resource: PolicyResource, layers: 
       return { source: layer.source, outcome: "block_match", rule: blocked };
     }
     if (layer.rules[allowedField].length === 0) {
-      return { source: layer.source, outcome: "unrestricted" };
+      return resource === "proxy" && layer.source === "token"
+        ? { source: layer.source, outcome: "allow_miss" }
+        : { source: layer.source, outcome: "unrestricted" };
     }
     const allowed = layer.rules[allowedField].find((rule) => matches(rule, value));
     return allowed
@@ -262,12 +266,15 @@ function clonePolicyRules(rules: PolicyRules): PolicyRules {
     blockedActions: [...rules.blockedActions],
     allowedProxies: [...rules.allowedProxies],
     blockedProxies: [...rules.blockedProxies],
+    allowedTriggers: [...(rules.allowedTriggers ?? [])],
+    blockedTriggers: [...(rules.blockedTriggers ?? [])],
   };
 }
 
 function policyRulesEqual(left: PolicyRules, right: PolicyRules): boolean {
   return (Object.keys(left) as Array<keyof PolicyRules>).every(
     (field) =>
-      left[field].length === right[field].length && left[field].every((rule, index) => rule === right[field][index]),
+      (left[field] ?? []).length === (right[field] ?? []).length &&
+      (left[field] ?? []).every((rule, index) => rule === (right[field] ?? [])[index]),
   );
 }

@@ -1,15 +1,12 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
 import type { ProviderFetch } from "../provider-runtime.ts";
-import type { StoryblokActionName } from "./actions.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import {
-  defineProviderExecutors,
-  defineProviderProxy,
-  providerUserAgent,
-  ProviderRequestError,
-  requireApiKeyCredential,
-} from "../provider-runtime.ts";
+import { compactObject, optionalRecord, optionalString, optionalStringArray, requiredString } from "../../core/cast.ts";
+import { requireApiKeyCredential } from "../provider-credentials.ts";
+import { defineProviderExecutors } from "../provider-executors.ts";
+import { defineProviderProxy } from "../provider-proxy.ts";
+import { providerInputError, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "storyblok";
 
@@ -44,7 +41,7 @@ const storyblokRegionLabels = {
   cn: "China",
 } satisfies Record<StoryblokRegion, string>;
 
-const storyblokActionHandlers: Record<StoryblokActionName, StoryblokActionHandler> = {
+const storyblokActionHandlers: ProviderActionHandlers<"storyblok", StoryblokActionHandler> = {
   get_space(_input, context) {
     return storyblokRequestJson({ path: "/spaces/me" }, context, "execute");
   },
@@ -161,7 +158,7 @@ export const credentialValidators: CredentialValidators = {
     const spaceName = optionalString(space?.name);
     const domain = optionalString(space?.domain);
     const cacheVersion = readInteger(space?.version) ?? optionalString(space?.version);
-    const languageCodes = readStringArray(space?.language_codes);
+    const languageCodes = optionalStringArray(space?.language_codes);
 
     return {
       profile: {
@@ -403,12 +400,4 @@ function readInteger(value: unknown): number | undefined {
     }
   }
   return undefined;
-}
-
-function readStringArray(value: unknown): string[] | undefined {
-  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : undefined;
-}
-
-function providerInputError(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

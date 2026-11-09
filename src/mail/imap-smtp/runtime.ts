@@ -17,11 +17,10 @@ import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { assertPublicHttpUrl } from "../../core/request.ts";
-import {
-  defineProviderExecutors,
-  ProviderRequestError,
-  requireCustomCredential,
-} from "../../providers/provider-runtime.ts";
+import { isCloudflareWorkerRuntime } from "../../core/runtime-execution.ts";
+import { requireCustomCredential } from "../../providers/provider-credentials.ts";
+import { defineProviderExecutors } from "../../providers/provider-executors.ts";
+import { ProviderRequestError } from "../../providers/provider-runtime.ts";
 import { mailConnectionTimeoutMs, mailImapPort, mailMessageFetchByteLimit, mailSmtpPort } from "./config.ts";
 import { MailProtocolError } from "./errors.ts";
 import { sanitizeTempFileName } from "./temp-files.ts";
@@ -35,6 +34,11 @@ export interface MailRuntimeConfig {
   displayName: string;
   attachmentFallbackPrefix: string;
   connectAuthMessage: string;
+  /**
+   * Screen the resolved IP addresses of the mailbox hosts before connecting.
+   * Only needed by providers whose hosts come from user input.
+   */
+  enforceHostNetworkPolicy?: boolean;
   readCredential(values: Record<string, string>): MailCredential;
 }
 
@@ -103,6 +107,7 @@ export function createMailProviderRuntime(config: MailRuntimeConfig): MailProvid
       createMailProtocol({
         displayName: config.displayName,
         attachmentFallbackPrefix: config.attachmentFallbackPrefix,
+        enforceHostNetworkPolicy: config.enforceHostNetworkPolicy,
       }),
     );
     return protocolPromise;
@@ -155,7 +160,7 @@ async function validateMailCredential(
     await validateMailPhase(config, "imap", credential.imapHost, mailImapPort, logger, () =>
       protocol.validateImapCredential(credential),
     );
-    await validateMailPhase(config, "smtp", credential.smtpHost, mailSmtpPort, logger, () =>
+    await validateMailPhase(config, "smtp", credential.smtpHost, credential.smtpPort ?? mailSmtpPort, logger, () =>
       protocol.validateSmtpCredential(credential),
     );
   } catch (error) {
@@ -176,10 +181,6 @@ async function validateMailCredential(
       smtpHost: credential.smtpHost,
     },
   };
-}
-
-function isCloudflareWorkerRuntime(): boolean {
-  return typeof navigator === "object" && navigator.userAgent === "Cloudflare-Workers";
 }
 
 async function validateMailPhase(
@@ -225,8 +226,23 @@ async function validateMailPhase(
       },
       `${config.service} mail credential validation failed`,
     );
-    throw error;
+    throw describeMailPhaseFailure(error, phase, host, port);
   }
+}
+
+/**
+ * Restate a transport failure with the endpoint that produced it.
+ *
+ * Both phases run inside one connect call, so a bare "Connection timeout" leaves
+ * the user guessing which of the two endpoints refused them. The usual cause is
+ * a mailbox whose submission service does not listen on the configured SMTP
+ * port, which is only actionable once the message names the port.
+ */
+function describeMailPhaseFailure(error: unknown, phase: "imap" | "smtp", host: string, port: number): unknown {
+  if (!(error instanceof MailProtocolError) || (error.kind !== "timeout" && error.kind !== "network")) {
+    return error;
+  }
+  return new MailProtocolError(error.kind, `${error.message} (${phase.toUpperCase()} ${host}:${port})`);
 }
 
 function describeMailValidationError(error: unknown): Record<string, unknown> {
@@ -275,7 +291,6 @@ export async function executeMailAction(
         const { summaries, nextBeforeUid } = await protocol.searchSummaries(credential, folder, criteria, {
           limit: searchInput.limit ?? defaultLimit,
           ...(searchInput.beforeUid !== undefined ? { beforeUid: searchInput.beforeUid } : {}),
-          peek: true,
         });
         return {
           folder,
@@ -287,9 +302,7 @@ export async function executeMailAction(
         const getInput = input as { folder?: string; uid: number };
         const folder = getInput.folder ?? defaultFolder;
         const message = await protocol.fetchMessage(credential, folder, getInput.uid, {
-          peek: true,
           maxBytes: mailMessageFetchByteLimit,
-          skipAttachmentBodies: true,
         });
         return {
           folder,
@@ -400,9 +413,7 @@ export async function executeMailAction(
         replyInput.folder = replyInput.folder ?? defaultFolder;
         replyInput.replyAll = replyInput.replyAll ?? false;
         const original = await protocol.fetchMessage(credential, replyInput.folder, replyInput.uid, {
-          peek: true,
           maxBytes: mailMessageFetchByteLimit,
-          skipAttachmentBodies: true,
         });
         const prepared = await buildReplySendInput(credential, original, replyInput, context);
         try {
@@ -415,9 +426,7 @@ export async function executeMailAction(
         const forwardInput = input as unknown as ParsedForwardInput;
         forwardInput.folder = forwardInput.folder ?? defaultFolder;
         const original = await protocol.fetchMessage(credential, forwardInput.folder, forwardInput.uid, {
-          peek: true,
           maxBytes: mailMessageFetchByteLimit,
-          skipAttachmentBodies: true,
         });
         const prepared = await buildForwardSendInput(original, forwardInput, context);
         try {
@@ -425,6 +434,14 @@ export async function executeMailAction(
         } finally {
           await prepared.cleanup();
         }
+      }
+      default: {
+        // A mail action name without a branch would otherwise fall off the
+        // switch and resolve to undefined, which the runtime reports as an
+        // empty success. The never assignment makes the compiler reject the
+        // next action name that skips this switch.
+        const exhaustiveActionName: never = actionName;
+        throw new ProviderRequestError(500, `Unsupported mail action: ${exhaustiveActionName}`);
       }
     }
   } catch (error) {
@@ -568,6 +585,7 @@ async function buildReplySendInput(
   }
 
   const cc = input.cc ?? (input.replyAll ? filterRecipientEmails(original.cc, credential.email) : undefined);
+  const referenceChain = buildReferenceChain(original);
   const resolvedAttachments = input.attachments ? await resolveOutgoingAttachments(input.attachments, context) : null;
   return {
     sendInput: {
@@ -577,16 +595,28 @@ async function buildReplySendInput(
       subject: input.subject ?? prefixSubject("Re:", original.summary.subject),
       ...(input.text !== undefined ? { text: buildReplyText(input.text, original) } : {}),
       ...(input.html !== undefined ? { html: buildReplyHtml(input.html, original) } : {}),
-      ...(original.summary.messageId
-        ? {
-            inReplyTo: original.summary.messageId,
-            references: original.summary.messageId,
-          }
-        : {}),
+      ...(original.summary.messageId ? { inReplyTo: original.summary.messageId } : {}),
+      ...(referenceChain ? { references: referenceChain } : {}),
       ...(resolvedAttachments ? { attachments: resolvedAttachments.attachments } : {}),
     },
     cleanup: resolvedAttachments?.cleanup ?? noop,
   };
+}
+
+/**
+ * Build the reply's `References` header: the parent's own chain with the parent's
+ * Message-ID appended (RFC 5322 section 3.6.4).
+ *
+ * Sending only the parent's Message-ID discards everything above it, which makes
+ * conformant clients start a fresh thread instead of continuing the existing one.
+ */
+function buildReferenceChain(original: MailFetchedMessage): string {
+  const messageId = original.summary.messageId;
+  const chain = original.references.filter((reference) => reference !== messageId);
+  if (messageId) {
+    chain.push(messageId);
+  }
+  return chain.join(" ");
 }
 
 async function buildForwardSendInput(
@@ -802,6 +832,11 @@ export function mapProtocolError(
           400,
           `${config.displayName} message UID does not exist in the selected folder.`,
         );
+      case "blocked_host":
+        // The mailbox host came from the connected credential, so a host the
+        // egress policy refuses is invalid input, not an upstream failure — the
+        // same 400 the credential-time guard returns for a literal address.
+        return new ProviderRequestError(400, error.message);
       case "timeout":
         return new ProviderRequestError(504, error.message);
       case "network":

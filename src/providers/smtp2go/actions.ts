@@ -3,28 +3,16 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "smtp2go" as const;
-
-export type Smtp2goActionName =
-  | "send_email"
-  | "search_activity"
-  | "get_email_summary"
-  | "view_api_key_permissions"
-  | "list_sender_domains"
-  | "list_single_sender_emails"
-  | "search_email_templates"
-  | "get_email_template";
-
-const nonEmptyStringSchema = (description: string) => s.string(description, { minLength: 1, pattern: "\\S" });
+const service = "smtp2go";
 
 const emailAddressListSchema = (description: string) =>
-  s.array(description, nonEmptyStringSchema("One email address or name/address pair accepted by SMTP2GO."), {
+  s.array(description, s.nonWhitespaceString("One email address or name/address pair accepted by SMTP2GO."), {
     minItems: 1,
     maxItems: 100,
   });
 
 const customHeaderSchema = s.object("A custom email header object accepted by SMTP2GO.", {
-  header: nonEmptyStringSchema("The custom header name."),
+  header: s.nonWhitespaceString("The custom header name."),
   value: s.string("The custom header value."),
 });
 
@@ -57,7 +45,7 @@ const requestIdSchema = s.string("The SMTP2GO request identifier.");
 const sendEmailInputBaseSchema = s.object(
   "Input parameters for sending a standard email through SMTP2GO.",
   {
-    sender: nonEmptyStringSchema("The name and email address to send from, such as Sender <sender@example.com>."),
+    sender: s.nonWhitespaceString("The name and email address to send from, such as Sender <sender@example.com>."),
     to: emailAddressListSchema("The email addresses to send to, up to 100 recipients."),
     cc: emailAddressListSchema("The email addresses to CC, up to 100 recipients."),
     bcc: emailAddressListSchema("The email addresses to BCC, up to 100 recipients."),
@@ -69,9 +57,9 @@ const sendEmailInputBaseSchema = s.object(
     custom_headers: s.array("Custom headers to add to the email.", customHeaderSchema, {
       minItems: 1,
     }),
-    template_id: nonEmptyStringSchema("The SMTP2GO template ID to use for this send."),
+    template_id: s.nonWhitespaceString("The SMTP2GO template ID to use for this send."),
     template_data: templateDataSchema,
-    schedule: nonEmptyStringSchema("A future SMTP2GO schedule timestamp within the next three days."),
+    schedule: s.nonWhitespaceString("A future SMTP2GO schedule timestamp within the next three days."),
     fastaccept: s.boolean("Whether SMTP2GO should accept the email immediately and send it in the background."),
   },
   {
@@ -125,12 +113,12 @@ const searchActivityInputSchema = s.object(
     search_recipient: s.string("A recipient search string."),
     search_usernames: s.array(
       "SMTP2GO usernames to include in the activity search.",
-      nonEmptyStringSchema("One SMTP2GO username."),
+      s.nonWhitespaceString("One SMTP2GO username."),
       { minItems: 1 },
     ),
     subaccounts: s.array(
       "SMTP2GO subaccount IDs to include in the activity search.",
-      nonEmptyStringSchema("One SMTP2GO subaccount ID."),
+      s.nonWhitespaceString("One SMTP2GO subaccount ID."),
       { minItems: 1 },
     ),
     limit: s.integer("The maximum number of events to return.", {
@@ -146,7 +134,7 @@ const searchActivityInputSchema = s.object(
     include_headers: s.boolean("Whether to include full email headers in returned events."),
     custom_headers: s.array(
       "Custom header names to extract from returned raw headers.",
-      nonEmptyStringSchema("One custom header name."),
+      s.nonWhitespaceString("One custom header name."),
       { minItems: 1 },
     ),
     region: s.stringEnum("The SMTP2GO activity region to query.", ["us", "eu", "au"]),
@@ -232,10 +220,10 @@ const searchEmailTemplatesInputSchema = s.object(
     fuzzy_search: s.boolean("Whether search terms should use wildcard matching."),
     search_terms: s.array(
       "Template search terms matched against name, tag, ID, or subject.",
-      nonEmptyStringSchema("One template search term."),
+      s.nonWhitespaceString("One template search term."),
       { minItems: 1 },
     ),
-    tags: s.array("Template tags used to filter results.", nonEmptyStringSchema("One template tag."), { minItems: 1 }),
+    tags: s.array("Template tags used to filter results.", s.nonWhitespaceString("One template tag."), { minItems: 1 }),
     sort_direction: s.stringEnum("The template sort direction.", ["asc", "desc"]),
     page_size: s.integer("The maximum number of templates to return.", {
       minimum: 1,
@@ -258,7 +246,7 @@ const searchEmailTemplatesOutputSchema = s.object("The normalized SMTP2GO email 
 const getEmailTemplateInputSchema = s.object(
   "Input parameters for viewing an SMTP2GO template.",
   {
-    id: nonEmptyStringSchema("The case-sensitive SMTP2GO email template ID."),
+    id: s.nonWhitespaceString("The case-sensitive SMTP2GO email template ID."),
   },
   { required: ["id"] },
 );
@@ -272,6 +260,7 @@ const getEmailTemplateOutputSchema = s.object("The normalized SMTP2GO email temp
 export const smtp2goActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "send_email",
+    operationType: "write",
     description: "Send a standard JSON email through SMTP2GO without Base64 attachments or inline files.",
     requiredScopes: [],
     inputSchema: sendEmailInputSchema,
@@ -279,6 +268,7 @@ export const smtp2goActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "search_activity",
+    operationType: "read",
     description: "Search SMTP2GO email activity events with optional filters and pagination.",
     requiredScopes: [],
     inputSchema: searchActivityInputSchema,
@@ -286,6 +276,7 @@ export const smtp2goActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_email_summary",
+    operationType: "read",
     description: "Retrieve SMTP2GO account email statistics and current sending cycle summary.",
     requiredScopes: [],
     inputSchema: emailSummaryInputSchema,
@@ -293,6 +284,7 @@ export const smtp2goActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "view_api_key_permissions",
+    operationType: "read",
     description: "List the SMTP2GO API endpoint permissions available to the connected API key.",
     requiredScopes: [],
     inputSchema: emptyInputSchema,
@@ -300,6 +292,7 @@ export const smtp2goActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_sender_domains",
+    operationType: "read",
     description: "List SMTP2GO sender domains and their verification metadata.",
     requiredScopes: [],
     inputSchema: senderDomainInputSchema,
@@ -307,6 +300,7 @@ export const smtp2goActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_single_sender_emails",
+    operationType: "read",
     description: "List SMTP2GO single sender email addresses and verification status.",
     requiredScopes: [],
     inputSchema: singleSenderInputSchema,
@@ -314,6 +308,7 @@ export const smtp2goActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "search_email_templates",
+    operationType: "read",
     description: "Search SMTP2GO email templates by terms, tags, sorting, and pagination.",
     requiredScopes: [],
     inputSchema: searchEmailTemplatesInputSchema,
@@ -321,6 +316,7 @@ export const smtp2goActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_email_template",
+    operationType: "read",
     description: "Retrieve details for a single SMTP2GO email template by ID.",
     requiredScopes: [],
     inputSchema: getEmailTemplateInputSchema,

@@ -1,3 +1,7 @@
+import type { TransitFileUpload, TransitFileWriter } from "./types.ts";
+
+import { getProviderNetworkPolicy } from "./provider-network-policy.ts";
+
 /**
  * Query parameter values accepted by provider HTTP helpers.
  */
@@ -32,6 +36,33 @@ export function queryFlag(value: boolean | undefined): string | undefined {
  */
 export function encodePathSegment(value: unknown): string {
   return encodeURIComponent(String(value));
+}
+
+/**
+ * Report whether a URL path (query and fragment are ignored) contains a dot segment that an
+ * upstream could use to leave the path prefix a proxy endpoint was checked against.
+ *
+ * Each `/`-separated segment is percent-decoded once and then split again on `/` and `\`;
+ * any resulting `.` or `..` counts as traversal. WHATWG URL joining keeps `%2F` encoded, so
+ * `..%2F..%2Fv3` would otherwise reach upstreams that decode `%2F` before normalizing the
+ * path. An encoded separator inside an ordinary segment, such as GitLab's
+ * `projects/group%2Fproject`, still passes. Malformed percent encoding counts as traversal
+ * because how an upstream decodes it is undefined.
+ */
+export function hasPathTraversalSegment(path: string): boolean {
+  const pathname = path.split(/[?#]/u)[0]!;
+  for (const segment of pathname.split("/")) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      return true;
+    }
+    if (decoded.split(/[/\\]/u).some((part) => part === "." || part === "..")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -71,6 +102,7 @@ export interface BoundedResponseBytesOptions {
   maxBytes: number;
   fieldName: string;
   createError: (message: string) => Error;
+  signal?: AbortSignal;
 }
 
 /**
@@ -79,9 +111,13 @@ export interface BoundedResponseBytesOptions {
 export async function readBoundedResponseBytes(
   response: Response,
   options: BoundedResponseBytesOptions,
-): Promise<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer>> {
+  options.signal?.throwIfAborted();
   const contentLength = parseContentLength(response.headers.get("content-length"));
   if (contentLength !== undefined) {
+    if (contentLength > options.maxBytes) {
+      void response.body?.cancel().catch(() => undefined);
+    }
     assertMaxBytes(contentLength, options);
   }
 
@@ -92,22 +128,28 @@ export async function readBoundedResponseBytes(
   }
 
   const reader = response.body.getReader();
+  const abort = (): void => {
+    void reader.cancel().catch(() => undefined);
+  };
+  options.signal?.addEventListener("abort", abort, { once: true });
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
   try {
     while (true) {
       const { done, value } = await reader.read();
+      options.signal?.throwIfAborted();
       if (done) {
         break;
       }
       totalBytes += value.byteLength;
       if (totalBytes > options.maxBytes) {
-        await reader.cancel().catch(() => undefined);
+        void reader.cancel().catch(() => undefined);
         throw options.createError(`${options.fieldName} exceeds ${options.maxBytes} bytes`);
       }
       chunks.push(value);
     }
   } finally {
+    options.signal?.removeEventListener("abort", abort);
     reader.releaseLock();
   }
 
@@ -120,13 +162,91 @@ export async function readBoundedResponseBytes(
   return bytes;
 }
 
-// Egress targets are classified into two tiers for the SSRF guard:
+export interface TransitResponseOptions {
+  /** Optional provider limit, further bounded by the storage limit. */
+  maxBytes?: number;
+  /** Name the stored transit file carries. */
+  name: string;
+  mimeType: string;
+  /** Used in the size-limit error, as in {@link readBoundedResponseBytes}. */
+  fieldName: string;
+  createError: (message: string) => Error;
+  signal?: AbortSignal;
+}
+
+/**
+ * Store a provider download in transit storage without holding it in memory.
+ *
+ * A backend that accepts unknown-length streams (the filesystem store) gets the
+ * response body piped straight to disk, so memory stays flat whatever the file
+ * size or the number of concurrent downloads; the store enforces `maxBytes` as
+ * the bytes arrive. Any other backend keeps the buffered path, bounded exactly
+ * as before.
+ */
+export async function storeResponseInTransit(
+  response: Response,
+  transitFiles: TransitFileWriter,
+  options: TransitResponseOptions,
+): Promise<TransitFileUpload> {
+  const limits: BoundedResponseBytesOptions = {
+    maxBytes: Math.min(transitFiles.maxBytes, options.maxBytes ?? transitFiles.maxBytes),
+    fieldName: options.fieldName,
+    createError: options.createError,
+    signal: options.signal,
+  };
+  // `File.type` lower-cases the type and empties it entirely when any code
+  // point falls outside U+0020–U+007E. Mirror that so the streamed path stores
+  // exactly what the buffered path does, whatever the server sent.
+  const mimeType = /[^\u0020-\u007e]/.test(options.mimeType) ? "" : options.mimeType.toLowerCase();
+  if (!transitFiles.createFromStream || !response.body) {
+    const bytes = await readBoundedResponseBytes(response, limits);
+    return await transitFiles.create(new File([Uint8Array.from(bytes)], options.name, { type: mimeType }));
+  }
+  options.signal?.throwIfAborted();
+  const contentLength = parseContentLength(response.headers.get("content-length"));
+  if (contentLength !== undefined && contentLength > limits.maxBytes) {
+    void response.body.cancel().catch(() => undefined);
+    assertMaxBytes(contentLength, limits);
+  }
+  let size = 0;
+  const body = response.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        options.signal?.throwIfAborted();
+        size += chunk.byteLength;
+        assertMaxBytes(size, limits);
+        controller.enqueue(chunk);
+      },
+    }),
+    { signal: options.signal },
+  );
+  try {
+    return await transitFiles.createFromStream({
+      body,
+      name: options.name.toWellFormed(),
+      mimeType,
+      signal: options.signal,
+    });
+  } catch (error) {
+    // The store reports an over-limit stream as its own `file_too_large`;
+    // callers keep seeing the error they chose, as on the buffered path.
+    if ((error as { code?: unknown } | null)?.code === "file_too_large") {
+      throw options.createError(`${options.fieldName} exceeds ${limits.maxBytes} bytes`);
+    }
+    throw error;
+  }
+}
+
+// Egress targets are classified into three tiers for the SSRF guard:
 //
 //   - "reserved" (localHostnames, cloudMetadataHostnames, localHostnameSuffixes,
 //     reservedIpv4Cidrs, reservedIpv6Cidrs): loopback, link-local, cloud-metadata,
 //     multicast, and other unsafe special-use ranges. ALWAYS blocked — the
 //     private-network opt-in never unblocks these, because they are the classic
 //     SSRF escalation targets ("don't let the deployment attack itself").
+//   - "VPN-mapped" (vpnMappedIpv4Cidrs): benchmark address space used by some
+//     zero-trust VPNs to tunnel public SaaS traffic. Blocked by default, but a
+//     deployment may allow it for explicitly trusted hostnames.
 //   - "private" (privateHostnameSuffixes, privateIpv4Cidrs, privateIpv6Cidrs):
 //     RFC 1918 / CGNAT / IPv6 ULA LAN ranges and private hostname suffixes.
 //     Blocked by default, but reachable once a self-hosted deployment opts in via
@@ -138,7 +258,12 @@ export async function readBoundedResponseBytes(
 // Always blocked: names that resolve to loopback, regardless of the flag.
 const localHostnames = new Set(["localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"]);
 // Always blocked: cloud instance-metadata endpoints (prime SSRF escalation targets).
-const cloudMetadataHostnames = new Set(["instance-data.ec2.internal", "metadata.google.internal", "metadata.goog"]);
+const cloudMetadataHostnames = new Set([
+  "instance-data.ec2.internal",
+  "metadata",
+  "metadata.google.internal",
+  "metadata.goog",
+]);
 // Always blocked: .localhost (RFC 6761 loopback) and the localhost.localdomain alias.
 const localHostnameSuffixes = [".localhost", ".localdomain"];
 // Flag-gated: private hostname suffixes with mixed standards status — .local (mDNS special-use,
@@ -153,25 +278,33 @@ const privateIpv4Cidrs: Array<[number, number]> = [
   [ipv4ToNumber("192.168.0.0"), 16],
 ];
 // Always blocked (opt-in never unblocks these): this-network (0/8), loopback (127/8),
-// link-local incl. the 169.254.169.254 metadata host (169.254/16), IANA protocol/documentation/
-// benchmark blocks, multicast (224/4), and future-use (240/4). 100.100.100.200/32 is the Alibaba
+// link-local incl. the 169.254.169.254 metadata host (169.254/16), IANA protocol/documentation
+// blocks, multicast (224/4), and future-use (240/4). 100.100.100.200/32 is the Alibaba
 // Cloud metadata endpoint — it sits inside CGNAT (100.64/10) but is pinned here so it stays
-// blocked even after opting into private networks.
+// blocked even after opting into private networks. 168.63.129.16/32 is the Azure platform
+// endpoint (WireServer) that serves VM agent and extension configuration; it is a public
+// address reachable only from inside Azure, so no range above covers it.
 const reservedIpv4Cidrs: Array<[number, number]> = [
   [ipv4ToNumber("0.0.0.0"), 8],
   [ipv4ToNumber("100.100.100.200"), 32],
   [ipv4ToNumber("127.0.0.0"), 8],
+  [ipv4ToNumber("168.63.129.16"), 32],
   [ipv4ToNumber("169.254.0.0"), 16],
   [ipv4ToNumber("192.0.0.0"), 24],
   [ipv4ToNumber("192.0.2.0"), 24],
-  [ipv4ToNumber("198.18.0.0"), 15],
   [ipv4ToNumber("198.51.100.0"), 24],
   [ipv4ToNumber("203.0.113.0"), 24],
   [ipv4ToNumber("224.0.0.0"), 4],
   [ipv4ToNumber("240.0.0.0"), 4],
 ];
-// Always blocked: unspecified/loopback (::, ::1), link-local (fe80::/10), multicast (ff00::/8),
-// plus discard, documentation, benchmark, and other special-purpose IPv6 ranges (RFC 6890 registry).
+// Trusted-host only: RFC 2544 benchmark space used by aTrust/EasyConnect-class VPNs to map
+// public SaaS hostnames into locally routed addresses.
+const vpnMappedIpv4Cidrs: Array<[number, number]> = [[ipv4ToNumber("198.18.0.0"), 15]];
+// Always blocked: unspecified/loopback (::, ::1), link-local (fe80::/10), the IPv6 metadata
+// endpoints of AWS (fd00:ec2::254), Google Cloud (fd20:ce::254), and Oracle Cloud
+// (fd00:c1::a9fe:a9fe, used by IPv6-only instances), which sit inside the flag-gated ULA range,
+// multicast (ff00::/8), plus discard, documentation, benchmark, and other special-purpose IPv6
+// ranges (RFC 6890 registry).
 const reservedIpv6Cidrs: Array<[Uint8Array, number]> = [
   [ipv6ToBytes("::"), 128],
   [ipv6ToBytes("::1"), 128],
@@ -182,6 +315,9 @@ const reservedIpv6Cidrs: Array<[Uint8Array, number]> = [
   [ipv6ToBytes("2001:db8::"), 32],
   [ipv6ToBytes("3fff::"), 20],
   [ipv6ToBytes("5f00::"), 16],
+  [ipv6ToBytes("fd00:c1::a9fe:a9fe"), 128],
+  [ipv6ToBytes("fd00:ec2::254"), 128],
+  [ipv6ToBytes("fd20:ce::254"), 128],
   [ipv6ToBytes("fe80::"), 10],
   [ipv6ToBytes("ff00::"), 8],
 ];
@@ -206,8 +342,8 @@ export interface PublicHttpUrlOptions {
 }
 
 /**
- * Deployment-level opt-in that lets self-hosted provider connections (currently
- * Dokploy) target RFC 1918, carrier-grade-NAT, and private-hostname addresses.
+ * Read the active asynchronous runtime context’s private-network permission.
+ * Self-hosted providers opt into this permission through their URL and transport guards.
  *
  * Off by default so a shared/multi-tenant runtime keeps a public-only SSRF guard
  * and a tenant cannot turn a self-hosted connection into an SSRF pivot into the
@@ -217,16 +353,8 @@ export interface PublicHttpUrlOptions {
  * Even when enabled, reserved, loopback, link-local, cloud-metadata, multicast,
  * and IPv6 targets remain blocked by {@link assertPublicHttpUrl}.
  */
-let privateNetworkAccessAllowed = false;
-
-/** Configure whether opted-in providers may target private networks (called once at deployment bootstrap). */
-export function setPrivateNetworkAccessAllowed(allowed: boolean): void {
-  privateNetworkAccessAllowed = allowed;
-}
-
-/** Whether the current deployment allows opted-in providers to target private networks. */
 export function isPrivateNetworkAccessAllowed(): boolean {
-  return privateNetworkAccessAllowed;
+  return getProviderNetworkPolicy().allowPrivateNetwork ?? false;
 }
 
 /** Parse the `OOMOL_CONNECT_ALLOW_PRIVATE_NETWORK` flag; only explicit truthy values enable it. */
@@ -236,6 +364,50 @@ export function parsePrivateNetworkAccessFlag(value: string | undefined): boolea
   }
   const normalized = value.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+/**
+ * Whether the active runtime trusts this hostname's private or VPN-mapped DNS answers.
+ * No hosts are trusted outside a configured runtime context.
+ *
+ * An entry starting with `.` matches the domain and its subdomains; other entries
+ * match exactly. The exception applies only to DNS answers, not literal IP URLs.
+ * It supports corporate VPNs that map public domains into private or benchmark
+ * ranges. Loopback, link-local, cloud-metadata and other unsafe addresses remain blocked.
+ */
+export function isEgressTrustedHost(hostname: string): boolean {
+  const egressTrustedHosts = getProviderNetworkPolicy().trustedHosts ?? [];
+  if (egressTrustedHosts.length === 0) {
+    return false;
+  }
+  const host = normalizeTrustedHostEntry(hostname);
+  if (host.length === 0) {
+    return false;
+  }
+  return egressTrustedHosts.some((entry) =>
+    entry.startsWith(".") ? host === entry.slice(1) || host.endsWith(entry) : host === entry,
+  );
+}
+
+/**
+ * Parse the `OOMOL_CONNECT_EGRESS_TRUSTED_HOSTS` flag: a comma-separated
+ * host list, e.g. `".feishu.cn,.larksuite.com,api.example.com"`. Blank entries
+ * are dropped so a trailing comma cannot produce an entry that matches nothing
+ * (or, worse, everything).
+ */
+export function parseEgressTrustedHosts(value: string | undefined): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map(normalizeTrustedHostEntry)
+    .filter((entry) => entry.length > 0 && entry !== ".");
+}
+
+/** Lowercase, trim, and drop a fully-qualified trailing dot so entries and hosts compare equal. */
+function normalizeTrustedHostEntry(value: string): string {
+  return value.trim().toLowerCase().replace(/\.$/, "");
 }
 
 /**
@@ -270,7 +442,7 @@ export function assertPublicHttpUrl(value: string, options: PublicHttpUrlOptions
   }
 
   const ipv4 = parseIpv4(hostname);
-  if (ipv4 !== undefined && isBlockedIpv4(ipv4, options.allowPrivateNetwork === true)) {
+  if (ipv4 !== undefined && isAddressClassBlocked(classifyIpv4(ipv4), options.allowPrivateNetwork === true)) {
     throw options.createError(`${options.fieldName} must not target private or reserved IP addresses`);
   }
 
@@ -284,41 +456,52 @@ export function assertPublicHttpUrl(value: string, options: PublicHttpUrlOptions
   return url;
 }
 
+export type IpAddressClass = "public" | "private" | "vpn-mapped" | "always-blocked";
+
 /**
- * Return whether a resolved IP address (IPv4 or IPv6 text form) is a private,
- * reserved, loopback, link-local, or metadata target that provider egress must
- * not reach.
+ * Classify one resolved IPv4 or IPv6 address for the shared egress policy.
  *
- * This complements {@link assertPublicHttpUrl}: the URL guard validates literal
- * hostnames before a request, while this check validates the addresses a
- * hostname actually resolves to (closing name→private-IP bypasses). IPv6
- * ranges that embed an IPv4 address (v4-mapped, NAT64, 6to4) are checked
- * against the IPv4 policy. Unparseable input is treated as blocked.
+ * IPv6 ranges that embed an IPv4 address (v4-mapped, NAT64, 6to4, Teredo)
+ * inherit the embedded IPv4 classification. Unparseable input fails closed.
  */
-export function isBlockedIpAddress(address: string, allowPrivateNetwork = false): boolean {
+export function classifyIpAddress(address: string): IpAddressClass {
   const ipv4 = parseIpv4(address);
   if (ipv4 !== undefined) {
-    return isBlockedIpv4(ipv4, allowPrivateNetwork);
+    return classifyIpv4(ipv4);
   }
 
   const ipv6 = parseIpv6(address);
   if (ipv6 === undefined) {
-    return true;
+    return "always-blocked";
   }
   if (reservedIpv6Cidrs.some(([network, bits]) => ipv6InCidr(ipv6, network, bits))) {
-    return true;
+    return "always-blocked";
   }
-  if (!allowPrivateNetwork && privateIpv6Cidrs.some(([network, bits]) => ipv6InCidr(ipv6, network, bits))) {
-    return true;
+  if (privateIpv6Cidrs.some(([network, bits]) => ipv6InCidr(ipv6, network, bits))) {
+    return "private";
   }
   for (const [network, bits, offset] of ipv4EmbeddedIpv6Cidrs) {
     if (ipv6InCidr(ipv6, network, bits)) {
-      const embedded =
-        ((ipv6[offset]! << 24) | (ipv6[offset + 1]! << 16) | (ipv6[offset + 2]! << 8) | ipv6[offset + 3]!) >>> 0;
-      return isBlockedIpv4(embedded, allowPrivateNetwork);
+      return classifyIpv4(readIpv4At(ipv6, offset));
     }
   }
-  return false;
+  const teredo = classifyTeredoIpv6(ipv6);
+  if (teredo !== undefined) {
+    return teredo;
+  }
+  return "public";
+}
+
+/**
+ * Return whether a resolved IP address is blocked by the default egress policy.
+ *
+ * This complements {@link assertPublicHttpUrl}: the URL guard validates literal
+ * hostnames before a request, while this check validates the addresses a
+ * hostname actually resolves to. Private addresses may be enabled explicitly;
+ * VPN-mapped and always-blocked ranges remain closed here.
+ */
+export function isBlockedIpAddress(address: string, allowPrivateNetwork = false): boolean {
+  return isAddressClassBlocked(classifyIpAddress(address), allowPrivateNetwork);
 }
 
 /**
@@ -343,11 +526,52 @@ export function isIpAddress(value: string): boolean {
   return parseIpv4(value) !== undefined || parseIpv6(value) !== undefined;
 }
 
-function isBlockedIpv4(value: number, allowPrivateNetwork: boolean): boolean {
-  if (reservedIpv4Cidrs.some(([network, bits]) => ipv4InCidr(value, network, bits))) {
-    return true;
+function readIpv4At(bytes: Uint8Array, offset: number): number {
+  return ((bytes[offset]! << 24) | (bytes[offset + 1]! << 16) | (bytes[offset + 2]! << 8) | bytes[offset + 3]!) >>> 0;
+}
+
+/**
+ * Teredo (RFC 4380, `2001:0000::/32`) embeds a server IPv4 and an obfuscated
+ * client IPv4 (last 32 bits XOR `0xffffffff`). Classify as the stricter of the
+ * two so a crafted Teredo address cannot hide IMDS or RFC 1918 behind a public
+ * 6-in-4 prefix.
+ */
+function classifyTeredoIpv6(ipv6: Uint8Array): IpAddressClass | undefined {
+  if (ipv6[0] !== 0x20 || ipv6[1] !== 0x01 || ipv6[2] !== 0x00 || ipv6[3] !== 0x00) {
+    return undefined;
   }
-  return !allowPrivateNetwork && privateIpv4Cidrs.some(([network, bits]) => ipv4InCidr(value, network, bits));
+  return stricterIpAddressClass(classifyIpv4(readIpv4At(ipv6, 4)), classifyIpv4(readIpv4At(ipv6, 12) ^ 0xffffffff));
+}
+
+function stricterIpAddressClass(left: IpAddressClass, right: IpAddressClass): IpAddressClass {
+  const rank: Record<IpAddressClass, number> = {
+    public: 0,
+    private: 1,
+    "vpn-mapped": 2,
+    "always-blocked": 3,
+  };
+  return rank[left] >= rank[right] ? left : right;
+}
+
+function classifyIpv4(value: number): IpAddressClass {
+  if (reservedIpv4Cidrs.some(([network, bits]) => ipv4InCidr(value, network, bits))) {
+    return "always-blocked";
+  }
+  if (vpnMappedIpv4Cidrs.some(([network, bits]) => ipv4InCidr(value, network, bits))) {
+    return "vpn-mapped";
+  }
+  if (privateIpv4Cidrs.some(([network, bits]) => ipv4InCidr(value, network, bits))) {
+    return "private";
+  }
+  return "public";
+}
+
+function isAddressClassBlocked(addressClass: IpAddressClass, allowPrivateNetwork: boolean): boolean {
+  return (
+    addressClass === "always-blocked" ||
+    addressClass === "vpn-mapped" ||
+    (!allowPrivateNetwork && addressClass === "private")
+  );
 }
 
 function normalizeHostname(value: string): string {

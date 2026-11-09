@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "theirstack" as const;
+const service = "theirstack";
 
 const nonEmptyString = (description: string) => s.string(description, { minLength: 1 });
 const nonEmptyStringArray = (description: string) =>
@@ -266,11 +266,10 @@ const getCreditBalanceOutputSchema = s.object(
   { optional: ["earliest_expiration"] },
 );
 
-export type TheirStackActionName = "search_jobs" | "search_companies" | "list_technographics" | "get_credit_balance";
-
 export const theirstackActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "search_jobs",
+    operationType: "read",
     description: "Search TheirStack job postings with company, title, keyword, location, and posting date filters.",
     requiredScopes: [],
     inputSchema: jobSearchInputSchema,
@@ -278,6 +277,7 @@ export const theirstackActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "search_companies",
+    operationType: "read",
     description: "Search TheirStack companies by firmographic, hiring, and technographic filters.",
     requiredScopes: [],
     inputSchema: companySearchInputSchema,
@@ -285,6 +285,7 @@ export const theirstackActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_technographics",
+    operationType: "read",
     description: "List technologies and buying-intent keywords detected by TheirStack for a company.",
     requiredScopes: [],
     inputSchema: technographicsInputSchema,
@@ -292,6 +293,7 @@ export const theirstackActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_credit_balance",
+    operationType: "read",
     description: "Retrieve the authenticated TheirStack team's current credit balance.",
     requiredScopes: [],
     inputSchema: getCreditBalanceInputSchema,

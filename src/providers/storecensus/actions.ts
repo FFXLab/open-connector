@@ -5,8 +5,6 @@ import { defineProviderAction } from "../../core/provider-definition.ts";
 
 const service = "storecensus";
 
-const nonEmptyStringSchema = (description: string) => s.string({ minLength: 1, pattern: "\\S", description });
-
 const storecensusSectionSchema = s.stringEnum("A StoreCensus response section to include.", [
   "basic_info",
   "contact_info",
@@ -77,11 +75,12 @@ const appSchema = s.looseObject("A StoreCensus Shopify app record.", {
 export const storecensusActions: ProviderActionDefinition[] = [
   defineProviderAction(service, {
     name: "get_website",
+    operationType: "read",
     description: "Retrieve StoreCensus ecommerce intelligence for a website domain or lead ID.",
     inputSchema: s.object(
       "The input payload for retrieving one StoreCensus website.",
       {
-        domain: nonEmptyStringSchema(
+        domain: s.nonWhitespaceString(
           "The domain name or numeric StoreCensus lead ID to retrieve, such as example-store.com or 12345.",
         ),
         sections: sectionsSchema,
@@ -94,6 +93,7 @@ export const storecensusActions: ProviderActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "search_stores",
+    operationType: "read",
     description: "Search StoreCensus ecommerce stores with filters and cursor pagination.",
     inputSchema: s.object(
       "The input payload for searching StoreCensus stores.",
@@ -104,7 +104,7 @@ export const storecensusActions: ProviderActionDefinition[] = [
         sort: s.object(
           "The StoreCensus sort configuration.",
           {
-            column: nonEmptyStringSchema("The StoreCensus column to sort by."),
+            column: s.nonWhitespaceString("The StoreCensus column to sort by."),
             direction: s.stringEnum("The sort direction.", ["asc", "desc"]),
           },
           { optional: ["direction"] },
@@ -113,7 +113,7 @@ export const storecensusActions: ProviderActionDefinition[] = [
           minimum: 1,
           maximum: 500,
         }),
-        cursor: nonEmptyStringSchema("The StoreCensus cursor returned by the previous page."),
+        cursor: s.nonWhitespaceString("The StoreCensus cursor returned by the previous page."),
         sections: sectionsSchema,
       },
       { optional: ["filters", "sort", "pageSize", "cursor", "sections"] },
@@ -128,6 +128,7 @@ export const storecensusActions: ProviderActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_apps",
+    operationType: "read",
     description: "List or search StoreCensus Shopify apps with page pagination.",
     inputSchema: s.object(
       "The input payload for listing StoreCensus Shopify apps.",
@@ -139,7 +140,7 @@ export const storecensusActions: ProviderActionDefinition[] = [
         }),
         app_id: s.integer("The specific StoreCensus app ID to retrieve.", { minimum: 1 }),
         minRating: s.number("The minimum app rating to return.", { minimum: 0, maximum: 5 }),
-        search: nonEmptyStringSchema("A text search applied to app name, description, or developer."),
+        search: s.nonWhitespaceString("A text search applied to app name, description, or developer."),
         categoryId: s.integer("The StoreCensus app category ID to filter by.", { minimum: 1 }),
       },
       { optional: ["page", "pageSize", "app_id", "minRating", "search", "categoryId"] },
@@ -152,6 +153,7 @@ export const storecensusActions: ProviderActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_app_categories",
+    operationType: "read",
     description: "List StoreCensus Shopify app categories that have active apps.",
     inputSchema: s.object("The input payload for listing StoreCensus app categories.", {}),
     outputSchema: s.object("The response returned when listing StoreCensus app categories.", {

@@ -5,15 +5,10 @@ import { defineProviderAction } from "../../core/provider-definition.ts";
 
 const service = "fluxguard";
 
-const nonEmptyStringSchema = (description: string) =>
-  s.string(description, {
-    minLength: 1,
-    pattern: "\\S",
-  });
 const urlSchema = s.url("The absolute URL that Fluxguard should monitor.");
-const siteIdSchema = nonEmptyStringSchema("The Fluxguard site ID.");
-const sessionIdSchema = nonEmptyStringSchema("The Fluxguard session ID.");
-const pageIdSchema = nonEmptyStringSchema("The Fluxguard page ID.");
+const siteIdSchema = s.nonWhitespaceString("The Fluxguard site ID.");
+const sessionIdSchema = s.nonWhitespaceString("The Fluxguard session ID.");
+const pageIdSchema = s.nonWhitespaceString("The Fluxguard page ID.");
 const webhookUrlSchema = s.url("The webhook URL that Fluxguard should notify.");
 const rawObjectSchema = s.unknownObject("The raw object returned by Fluxguard.");
 const accountSchema = s.object("A normalized Fluxguard account response.", {
@@ -51,13 +46,14 @@ const genericResultSchema = s.object("A normalized Fluxguard operation result.",
 });
 const categoryIdsSchema = s.array(
   "Fluxguard site category IDs to assign while creating a site.",
-  nonEmptyStringSchema("A Fluxguard category ID."),
+  s.nonWhitespaceString("A Fluxguard category ID."),
   { minItems: 1 },
 );
 
 export const fluxguardActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "get_account",
+    operationType: "read",
     description: "Get account attributes for the authenticated Fluxguard organization.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for getting a Fluxguard account.", {}),
@@ -67,6 +63,7 @@ export const fluxguardActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "add_page",
+    operationType: "write",
     description: "Add a URL as a monitored Fluxguard page.",
     requiredScopes: [],
     inputSchema: s.object(
@@ -75,7 +72,7 @@ export const fluxguardActions: ActionDefinition[] = [
         url: urlSchema,
         siteId: siteIdSchema,
         sessionId: sessionIdSchema,
-        nickname: nonEmptyStringSchema("A nickname for the monitored site or page."),
+        nickname: s.nonWhitespaceString("A nickname for the monitored site or page."),
         categoryIds: categoryIdsSchema,
       },
       { optional: ["siteId", "sessionId", "nickname", "categoryIds"] },
@@ -86,6 +83,7 @@ export const fluxguardActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "initiate_crawl",
+    operationType: "write",
     description: "Initiate a Fluxguard crawl for a monitored session.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for initiating a Fluxguard crawl.", {
@@ -98,6 +96,7 @@ export const fluxguardActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_page",
+    operationType: "read",
     description: "Get Fluxguard data for a monitored page.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for getting a Fluxguard monitored page.", {
@@ -111,6 +110,7 @@ export const fluxguardActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_sample_webhook",
+    operationType: "read",
     description: "Get a sample Fluxguard webhook payload for the authenticated account.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for getting a Fluxguard sample webhook.", {}),
@@ -120,6 +120,7 @@ export const fluxguardActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_webhooks",
+    operationType: "read",
     description: "List Fluxguard webhooks configured for the authenticated account.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for listing Fluxguard webhooks.", {}),
@@ -129,6 +130,7 @@ export const fluxguardActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "upsert_webhook",
+    operationType: "write",
     description: "Create or replace the Fluxguard account webhook.",
     requiredScopes: [],
     inputSchema: s.object(
@@ -137,7 +139,7 @@ export const fluxguardActions: ActionDefinition[] = [
         url: webhookUrlSchema,
         siteCategoryIds: s.array(
           "Fluxguard site category IDs to associate with the webhook.",
-          nonEmptyStringSchema("A Fluxguard site category ID."),
+          s.nonWhitespaceString("A Fluxguard site category ID."),
           { minItems: 1 },
         ),
       },
@@ -149,6 +151,7 @@ export const fluxguardActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "delete_webhook",
+    operationType: "destructive",
     description: "Delete the Fluxguard account webhook.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for deleting a Fluxguard webhook.", {}),
@@ -158,6 +161,7 @@ export const fluxguardActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_categories",
+    operationType: "read",
     description: "List Fluxguard account categories.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for listing Fluxguard categories.", {}),
@@ -168,10 +172,11 @@ export const fluxguardActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_category",
+    operationType: "write",
     description: "Create a Fluxguard site category.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for creating a Fluxguard site category.", {
-      name: nonEmptyStringSchema("The Fluxguard site category name."),
+      name: s.nonWhitespaceString("The Fluxguard site category name."),
     }),
     outputSchema: s.object("The response returned when creating a Fluxguard site category.", {
       category: categorySchema,
@@ -179,6 +184,7 @@ export const fluxguardActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "delete_site",
+    operationType: "destructive",
     description: "Delete a Fluxguard monitored site and its associated data.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for deleting a Fluxguard site.", {
@@ -190,6 +196,7 @@ export const fluxguardActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "delete_page",
+    operationType: "destructive",
     description: "Delete a Fluxguard monitored page and its captured versions.",
     requiredScopes: [],
     inputSchema: s.object("The input payload for deleting a Fluxguard monitored page.", {
@@ -202,17 +209,3 @@ export const fluxguardActions: ActionDefinition[] = [
     }),
   }),
 ];
-
-export type FluxguardActionName =
-  | "get_account"
-  | "add_page"
-  | "initiate_crawl"
-  | "get_page"
-  | "get_sample_webhook"
-  | "list_webhooks"
-  | "upsert_webhook"
-  | "delete_webhook"
-  | "list_categories"
-  | "create_category"
-  | "delete_site"
-  | "delete_page";

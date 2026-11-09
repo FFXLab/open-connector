@@ -2,9 +2,10 @@
 
 <img src="../assets/openconnector-readme-banner.png" alt="OpenConnector - Connect Once. Use Everywhere." width="100%" />
 
-[English](../README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [Français](README.fr.md)
+[English](../README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Русский](README.ru.md) | [Français](README.fr.md) | [Español](README.es.md)
 
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](../LICENSE.txt)
+[![License: Modified Apache-2.0](https://img.shields.io/badge/License-Modified%20Apache--2.0-blue.svg)](../LICENSE.txt)
+[![npm](https://img.shields.io/npm/v/@oomol-lab/open-connector.svg)](https://www.npmjs.com/package/@oomol-lab/open-connector)
 ![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933)
 ![Cloudflare compatible](https://img.shields.io/badge/Cloudflare-compatible-F38020)
 ![MCP](https://img.shields.io/badge/MCP-ready-111827)
@@ -15,17 +16,34 @@
 
 </div>
 
-OpenConnector — open-source connector gateway для AI agents и альтернатива Composio. Подключите
+OpenConnector — open-source connector gateway для AI agents и альтернатива Pipedream/Composio. Подключите
 пользовательские аккаунты приложений один раз, а затем откройте общий catalog из 1,000+ providers и
 10 000+ готовых Actions для агентов и приложений.
+
+<table>
+  <tr>
+    <td width="33.33%" align="center"><img src="../assets/deployment-options/oomol.svg" alt="OOMOL" width="140"></td>
+    <td width="33.33%" align="center"><img src="../assets/deployment-options/self-hosted.svg" alt="Self-hosted" width="140"></td>
+    <td width="33.33%" align="center"><img src="../assets/deployment-options/more-platforms.svg" alt="Другие платформы" width="140"></td>
+  </tr>
+  <tr>
+    <td width="33.33%" valign="top">Managed OAuth и hosted runtime готовы к использованию. Не нужно разворачивать runtime или настраивать OAuth apps.</td>
+    <td width="33.33%" valign="top">Запуск локально или в собственной инфраструктуре через Docker или Node.js. Вы управляете storage и OAuth apps.</td>
+    <td width="33.33%" valign="top"><strong>Cloudflare</strong>, <strong>Fly.io</strong>, <strong>RepoCloud</strong>, <strong>nibrun</strong>, <strong>NEXUS AI</strong>, <strong>Pethost</strong>, <strong>ZopDay</strong> и другие.</td>
+  </tr>
+  <tr>
+    <td width="33.33%" align="center">🚀 <a href="https://oomol.com/docs/connector-saas/"><strong>OOMOL Hosted</strong></a></td>
+    <td width="33.33%" align="center"><a href="https://oomol.com/docs/openconnector-self-hosting/"><strong>Self-host</strong></a></td>
+    <td width="33.33%" align="center"><a href="deployment-options/README.ru.md"><strong>Другие платформы</strong></a></td>
+  </tr>
+</table>
 
 В application code используйте [Connector SDK](https://github.com/oomol-lab/connector-sdk), для
 local-agent relay — [oo CLI](https://github.com/oomol-lab/oo-cli), для agent hosts — MCP, для
 custom clients — HTTP/OpenAPI, а для администрирования и отладки — локальную Web Console.
 
 - Держите credentials, scopes, schemas, policies и run logs внутри проверяемого runtime.
-- Запускайте локально, на Fly.io, в Cloudflare-совместимой инфраструктуре или через hosted runtime
-  OOMOL.
+- Запускайте локально, в собственной инфраструктуре или через hosted runtime OOMOL.
 - Используйте одни и те же provider ids, Action ids, schemas и contracts в open-source и
   commercial SaaS deployments.
 
@@ -39,8 +57,8 @@ custom clients — HTTP/OpenAPI, а для администрирования и
   lazy-loaded executor source.
 - Runtime controls для production: connection identity, scopes, runtime tokens, action allow/block
   policies, временный транзит файлов и редактированные журналы запусков.
-- Варианты развертывания через локальный Docker или Node.js, Fly.io с persistent SQLite storage,
-  Cloudflare Workers / D1 / R2 / Static Assets и hosted runtime OOMOL.
+- Варианты развертывания через локальный Docker или Node.js и hosted runtime OOMOL. Дополнительные
+  управляемые платформы перечислены в [вариантах развертывания](deployment-options/README.ru.md).
 
 ## Где Это Уместно
 
@@ -109,24 +127,18 @@ flowchart LR
 
 ## Пути Использования
 
-| Путь                                 | Лучше всего подходит для                                | Включает                                                                                                                                                              |
-| ------------------------------------ | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Open-source self-host                | Разработчиков и команд, которым нужен полный контроль   | Локальный Docker или Node runtime, SQLite storage, MCP, HTTP, OpenAPI и Web Console                                                                                   |
-| Fly.io self-host                     | Команд, которым нужен hosted Docker runtime             | Node Docker runtime, SQLite storage на Fly volume, TLS, health checks, MCP, HTTP, OpenAPI и Web Console                                                               |
-| Cloudflare-совместимое развертывание | Команд, которым нужен легкий hosted runtime             | Workers runtime, состояние D1, транзитные файлы R2 и Static Assets для console                                                                                        |
-| [OOMOL](https://oomol.com/)          | Команд, ограниченных OAuth approval или сроками запуска | Hosted auth и runtime infrastructure с теми же provider и Action contracts; совместимость с open-source interface для последующего private или self-hosted deployment |
-
-## Видео Быстрого Старта Cloudflare
-
-[![Развернуть OpenConnector на Cloudflare Workers](../assets/cloudflare-quickstart-video.png)](https://www.youtube.com/watch?v=R0V1ZdCuTgc)
-
-[Пошаговое видео по развертыванию на Cloudflare Workers](https://www.youtube.com/watch?v=R0V1ZdCuTgc)
-показывает, как запустить OpenConnector на Cloudflare с Workers, D1, R2 и Web Console. Видео
-следует тому же процессу, что и [cloudflare.md](cloudflare.md): создать ресурсы Cloudflare,
-скопировать `wrangler.example.jsonc` в `wrangler.local.jsonc`, применить D1 migrations, задать
-обязательные secrets и выполнить `npm run deploy:cloudflare`.
+| Путь                        | Лучше всего подходит для                                | Включает                                                                                                                                                              |
+| --------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Open-source self-host       | Разработчиков и команд, которым нужен полный контроль   | Локальный Docker или Node runtime, SQLite storage, MCP, HTTP, OpenAPI и Web Console                                                                                   |
+| [OOMOL](https://oomol.com/) | Команд, ограниченных OAuth approval или сроками запуска | Hosted auth и runtime infrastructure с теми же provider и Action contracts; совместимость с open-source interface для последующего private или self-hosted deployment |
 
 ## Быстрый Старт
+
+> [!NOTE]
+> Эти шаги запускают self-hosted runtime. Для OAuth providers нужны OAuth client credentials из
+> приложений, которые вы самостоятельно регистрируете у соответствующих providers. Чтобы
+> пользователи могли авторизовать поддерживаемые providers без настройки собственных OAuth apps,
+> используйте [OOMOL-hosted connectors](https://oomol.com/apps).
 
 Запустите runtime из опубликованного образа через Docker Compose:
 
@@ -182,46 +194,19 @@ OAuth2 apps, named connections, credential encryption, token refresh и action p
 настройку API key и OAuth client, создание runtime tokens, просмотр Action schemas, отладку
 Actions, проверку недавних запусков и доступ к сгенерированным OpenAPI и MCP metadata.
 
-## Развертывание Cloudflare
-
-OpenConnector можно развернуть на Cloudflare: Workers запускает runtime, D1 хранит state, R2
-обрабатывает transit files, а Static Assets обслуживает Web Console.
-
-Создание ресурсов, migrations, secrets, локальная Worker preview и remote deployment описаны в
-[cloudflare.md](cloudflare.md).
-
-## Развертывание Fly.io
-
-OpenConnector также можно развернуть на Fly.io с Node Docker runtime и persistent SQLite storage на
-Fly volume.
-
-Создание Fly app, настройка volume, secrets, deployment, custom domain и scaling описаны в
-[fly-io.md](fly-io.md).
-
 ## Docker-образ (GHCR)
 
 Запускайте OpenConnector из готового образа в GitHub Packages (GHCR): `ghcr.io/oomol-lab/open-connector`.
-Используйте `latest` для новейшего release, закреплённую версию вроде `v1.0.0` для production или `tip`
-для последнего build из `main`.
+Используйте `latest` для новейшего release, закреплённую версию release для production или `tip` для
+последнего build из `main`.
 
 О тегах образа, pull и запуске см. [docker-ghcr.md (на английском)](docker-ghcr.md).
 
-## Хотите Использовать Напрямую?
+## Готовый к работе ИИ-бот Leina
 
-Пути выше предназначены для команд, которые интегрируют connector в свои продукты, runtimes или
-enterprise infrastructure. Если вы хотите сначала попробовать SaaS connection experience или сразу
-использовать это в работе, вам не обязательно сначала deploy OpenConnector или интегрировать SDK,
-CLI, MCP либо HTTP API.
+Если вам нужен ИИ-бот, которым можно пользоваться сразу, попробуйте [Leina](https://leina.ai/). Leina подключается к более чем 1500 SaaS-приложениям и позволяет настроить собственного ИИ-агента, свободно комбинируя подключения к приложениям, навыки и базу знаний под рабочие процессы вашей команды.
 
-[Wanta](https://wanta.ai/) — desktop product entry point с тем же 1,000+ SaaS/provider coverage.
-После подключения accounts можно через natural language искать, организовывать, создавать и
-синхронизировать данные между connected tools.
-
-| Если Вы Хотите                          | Что Дает Wanta                                                                                                          |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Попробовать 1,000+ SaaS connections     | Использовать то же SaaS/provider coverage без runtime deploy или предварительной SDK/CLI integration.                   |
-| Использовать Agents в ежедневной работе | Работать через natural language с email, chat, docs, data, projects, support, developer tools и marketing tools.        |
-| Делиться подключенными capabilities     | Один раз настроить connections и access scopes; teammates используют их без setup, а keys, tokens и credentials скрыты. |
+Используйте его в Slack, Microsoft Teams, Discord или Telegram, чтобы искать информацию, составлять еженедельные отчёты, упорядочивать отзывы клиентов и готовить сообщения для дальнейшего общения с потенциальными клиентами через приложения, к которым вы предоставили доступ.
 
 ## Документация
 
@@ -229,6 +214,7 @@ CLI, MCP либо HTTP API.
 - [Инструменты разработчика](sdk-cli.md)
 - [Руководство Gmail OAuth и SDK (на английском)](gmail-oauth-sdk.md)
 - [Runtime API и MCP](runtime-api.md)
+- [Варианты развертывания](deployment-options/README.ru.md)
 - [Развертывание Fly.io](fly-io.md)
 - [Развертывание Cloudflare](cloudflare.md)
 - [Docker-образ (GHCR) (на английском)](docker-ghcr.md)
@@ -265,10 +251,16 @@ Provider code находится в `src/providers/<service>`. Правила д
 ## Область Действия Лицензии
 
 Если не указано иное, исходный код, scripts, сгенерированное project scaffolding, tests и
-documentation, созданные для этого repository, лицензируются по Apache License, Version 2.0. См.
-[LICENSE.txt](../LICENSE.txt).
+documentation, созданные для этого repository, лицензируются по OpenConnector License,
+модифицированной версии Apache License 2.0. См. [LICENSE.txt](../LICENSE.txt).
 
-Лицензия Apache-2.0 для этого repository не предоставляет прав на third-party products, providers,
+Вы можете использовать, изменять и самостоятельно размещать OpenConnector для любых целей, включая
+коммерческое использование и встраивание в собственные продукты. Единственное дополнительное условие:
+для предоставления OpenConnector третьим лицам в виде hosted connector service нужна коммерческая
+лицензия OOMOL. Releases до v1.9.4 включительно остаются под немодифицированной Apache License 2.0.
+См. [NOTICE.md](../NOTICE.md).
+
+Лицензия для этого repository не предоставляет прав на third-party products, providers,
 apps, APIs, trademarks, service marks, trade names, logos, icons, brand assets, documentation,
 screenshots или другие copyrighted materials, принадлежащие соответствующим правообладателям.
 
@@ -285,3 +277,27 @@ files в этот repository.
 
 Пожалуйста, делайте issues и pull requests сфокусированными, уважительными и пригодными к
 исполнению. Участие в проекте регулируется [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md).
+
+## Поддержать OpenConnector
+
+Если OpenConnector оказался полезен, поставьте ⭐ — это поможет большему числу разработчиков узнать о проекте.
+
+<div align="center">
+
+<img src="../assets/star-open-connector.gif" alt="Как поставить Star проекту OpenConnector на GitHub" width="760" />
+
+</div>
+
+## Участники
+
+Спасибо всем, кто помогает развивать OpenConnector. Хотите присоединиться? Ознакомьтесь с
+[руководством по участию](../CONTRIBUTING.md).
+
+[![Участники OpenConnector](https://contrib.rocks/image?repo=oomol-lab/open-connector)](https://github.com/oomol-lab/open-connector/graphs/contributors)
+
+## История звёзд
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/star-history/star-history-dark.svg">
+  <img alt="История звёзд" src="../assets/star-history/star-history-light.svg">
+</picture>

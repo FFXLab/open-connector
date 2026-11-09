@@ -7,21 +7,29 @@ export interface ResponseCachePolicy {
 const catalogBrowserCacheControl = "public, max-age=0, must-revalidate";
 const catalogEdgeCacheControl = "public, max-age=31536000, stale-while-revalidate=86400";
 
-export function getResponseCachePolicy(method: string, path: string, status: number): ResponseCachePolicy | undefined {
-  // Runtime endpoints are filtered by the caller's token policy and exact
-  // connection grants. They must never enter a shared browser/CDN cache,
-  // even when the payload happens to look like catalog metadata.
-  if (path === "/v1" || path.startsWith("/v1/") || path === "/mcp" || path.startsWith("/mcp/")) {
-    return { cacheControl: "no-store", cloudflareCdnCacheControl: "no-store" };
-  }
-
-  if (isCatalogResponse(method, path) && status >= 200 && status < 300) {
+export function getResponseCachePolicy(
+  method: string,
+  path: string,
+  status: number,
+  explicitLocale = false,
+): ResponseCachePolicy | undefined {
+  if (isCatalogResponse(method, path) && ((status >= 200 && status < 300) || status === 304)) {
     return {
       cacheControl: catalogBrowserCacheControl,
-      cloudflareCdnCacheControl: catalogEdgeCacheControl,
-      vary: "Authorization, Cookie",
+      cloudflareCdnCacheControl: isProviderCatalog(path) && !explicitLocale ? "no-store" : catalogEdgeCacheControl,
+      vary: isProviderCatalog(path)
+        ? "Authorization, Cookie, Accept-Encoding, Accept-Language"
+        : "Authorization, Cookie, Accept-Encoding",
     };
   }
+
+  if (
+    path.startsWith("/v1/connection-requests/") ||
+    path === "/api/oauth/connection-requests" ||
+    path.startsWith("/api/oauth/connection-requests/") ||
+    path === "/oauth/saas/complete"
+  )
+    return { cacheControl: "private, no-store" };
 
   if (isRuntimeResponsePath(path)) {
     return { cacheControl: "no-store" };
@@ -35,6 +43,8 @@ function isCatalogResponse(method: string, path: string): boolean {
     return false;
   }
 
+  // Runtime catalogs depend on mutable configuration and access policy.
+  // Only static catalogs can use the shared edge cache.
   return (
     path === "/api/providers" ||
     /^\/api\/providers\/[^/]+$/.test(path) ||
@@ -51,7 +61,15 @@ function isRuntimeResponsePath(path: string): boolean {
     path.startsWith("/docs/") ||
     path === "/api" ||
     path.startsWith("/api/") ||
+    path === "/v1" ||
+    path.startsWith("/v1/") ||
+    path === "/mcp" ||
+    path.startsWith("/mcp/") ||
     path === "/oauth" ||
     path.startsWith("/oauth/")
   );
+}
+
+function isProviderCatalog(path: string): boolean {
+  return path === "/api/providers" || /^\/api\/providers\/[^/]+$/.test(path);
 }

@@ -2,45 +2,82 @@ import type {
   AppData,
   AuthDefinition,
   ConnectionRecord,
-  CredentialField,
+  MarketplaceState,
   OAuthConfig,
   ProviderConnectionStatus,
   ProviderDefinition,
+  ProviderScenario,
 } from "./model";
-import type { CSSProperties, FormEvent, ReactNode } from "react";
+import type { CSSProperties, ComponentType, ReactNode, SubmitEvent } from "react";
 
 import { useTranslate } from "@embra/i18n/react";
 import {
   ArrowLeft,
   ArrowUpRight,
+  Bot,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   CircleSlash2,
+  Cloud,
+  Database,
   ExternalLink,
   KeyRound,
+  Megaphone,
+  MessagesSquare,
   Plus,
   Search,
   Settings,
+  ShoppingBag,
+  SquareKanban,
   Trash2,
+  TrendingUp,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router";
+import { toast } from "sonner";
+import { defaultMarketplaceDiscoveryUrl, isDefaultMarketplace } from "../../src/marketplace/default-marketplace";
 import { apiDelete, apiPost, apiPut } from "./api";
+import { CredentialInput } from "./credential-input";
+import { DefaultMarketplaceCatalog } from "./default-marketplace-catalog";
+import { loadDefaultMarketplaceCatalog } from "./default-marketplace-discovery";
+import { MarketplacePage } from "./marketplace-page";
 import {
   credentialFieldsFor,
   filterProviders,
+  filterProvidersByCategory,
+  providerCategoryCounts,
   resolveProviderConnectionStatus,
   sortProviders,
   usableConnectionsForService,
 } from "./model";
+import {
+  clientConfigFieldsFor,
+  initialClientConfigFieldValues,
+  OAuthAppDialog,
+  splitClientConfigFieldValues,
+} from "./oauth-app-form";
+import { useOAuthAuthorizationOptions } from "./oauth-authorization-options";
+import { usesSaasOAuth, watchOAuthRequest } from "./oauth-connection-request";
+import { OneKeyProviderOption } from "./onekey-provider-option";
+import { isOneKeyPromotionHidden, setOneKeyPromotionHidden } from "./onekey-visibility";
+import {
+  featuredProvidersForScenario,
+  filterProvidersByScenario,
+  providerScenario,
+  providerScenarioCounts,
+  providerScenarioOptions,
+} from "./provider-scenarios";
 import { Badge, EmptyState, FormStatus, ProviderIcon, TagList } from "./shared-ui";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 interface ProvidersPageProps {
@@ -50,6 +87,7 @@ interface ProvidersPageProps {
 
 interface ProviderDetailProps {
   provider: ProviderDefinition;
+  marketplace?: MarketplaceState;
   connections: ConnectionRecord[];
   connectionStatus: ProviderConnectionStatus;
   oauthConfig?: OAuthConfig;
@@ -58,11 +96,58 @@ interface ProviderDetailProps {
 
 interface ProviderBrowserProps {
   data: AppData;
+  onRefresh(): void;
+}
+
+interface HostedAccessCardProps {
+  marketplace?: MarketplaceState;
+  officialMarketplace: boolean;
+  previewOpen: boolean;
+  serviceCount: number;
+  onPreview(): void;
+  onHide(): void;
+  onConnect(): void;
 }
 
 interface ProviderCardProps {
   provider: ProviderDefinition;
   status: ProviderConnectionStatus;
+  oneKeyAvailable: boolean;
+  officialMarketplace: boolean;
+}
+
+interface ProviderScenarioGridProps {
+  counts: Map<ProviderScenario, number>;
+  providers: ProviderDefinition[];
+  onSelect(scenario: ProviderDiscoveryScenario): void;
+}
+
+interface ProviderCatalogProps {
+  counts: Array<{ id: ProviderStatusFilter; labelKey: string; count: number }>;
+  categoryOptions: Array<{ category: string; displayName: string; count: number }>;
+  categoryFilter: string;
+  filtersActive: boolean;
+  hasMoreProviders: boolean;
+  loadMoreProviders(): void;
+  loadMoreProvidersRef: (node: HTMLDivElement | null) => void;
+  providers: ProviderDefinition[];
+  query: string;
+  scenarioFilter?: ProviderDiscoveryScenario | "all";
+  showStatusFilters: boolean;
+  showBrandNotice: boolean;
+  emptyTitleKey?: string;
+  emptyDescriptionKey?: string;
+  statusByService: Map<string, ProviderConnectionStatus>;
+  oneKeyServices: Set<string>;
+  officialMarketplace: boolean;
+  providerCount: number;
+  selected: ProviderStatusFilter;
+  totalProviderCount: number;
+  onReset(): void;
+  onCategoryFilterChange(value: string): void;
+  onQueryChange(value: string): void;
+  onScenarioFilterClear?(): void;
+  onStatusFilterChange?(value: ProviderStatusFilter): void;
 }
 
 interface ConnectionFormProps {
@@ -72,8 +157,10 @@ interface ConnectionFormProps {
   connectionNameValid: boolean;
   connection?: AppData["connections"][number];
   oauthConfig?: OAuthConfig;
+  oauthClientMode: OAuthClientMode;
   onRefresh(): void;
   onConfigureOAuthClient(): void;
+  onOAuthClientModeChange(mode: OAuthClientMode): void;
   onConnectionPendingChange?(connectionName?: string): void;
 }
 
@@ -91,13 +178,33 @@ interface ConnectionManagerProps {
   onNewConnectionNameChange(connectionName: string): void;
 }
 
-interface OAuthConfigFormProps {
-  provider: ProviderDefinition;
-  config?: OAuthConfig;
-  onRefresh(): void;
+type OAuthClientMode = "configured" | "manual";
+
+export interface ManualOAuthClientValues {
+  clientId: string;
+  clientSecret: string;
+  extraValues: Record<string, string>;
 }
 
-type ProviderStatusFilter = "all" | "connected" | "not_connected" | "oauth_needs_config";
+export interface OAuthAuthorizationRequestBody {
+  service: string;
+  connectionName: string;
+  clientId?: string;
+  clientSecret?: string;
+  extra?: Record<string, string>;
+  secretExtra?: Record<string, string>;
+  authorizationOptionIds?: string[];
+}
+
+export interface ManualOAuthAuthorizationInput {
+  auth: Extract<AuthDefinition, { type: "oauth2" }>;
+  values: ManualOAuthClientValues;
+}
+
+type ProviderStatusFilter = "all" | "connected" | "one_key" | "no_setup" | "not_connected" | "oauth_needs_config";
+type ProviderBrowserView = "manage" | "discover";
+type ManagedSourceFilter = "all" | "built_in" | "own_key";
+type ProviderDiscoveryScenario = Exclude<ProviderScenario, "other">;
 
 const providerPageSize = 48;
 const defaultConnectionName = "default";
@@ -112,6 +219,16 @@ const providerCardStyle = {
   contentVisibility: "auto",
   containIntrinsicSize: "64px",
 } satisfies CSSProperties;
+const scenarioIconById: Record<ProviderDiscoveryScenario, ComponentType<{ className?: string }>> = {
+  ai: Bot,
+  "cross-border-ecommerce": ShoppingBag,
+  investment: TrendingUp,
+  communication: MessagesSquare,
+  productivity: SquareKanban,
+  marketing: Megaphone,
+  "data-storage": Database,
+  developer: Cloud,
+};
 
 export function ProvidersPage(props: ProvidersPageProps): ReactNode {
   const params = useParams();
@@ -120,7 +237,7 @@ export function ProvidersPage(props: ProvidersPageProps): ReactNode {
     : undefined;
 
   if (!params.service) {
-    return <ProviderBrowser data={props.data} />;
+    return <ProviderBrowser data={props.data} onRefresh={props.onRefresh} />;
   }
 
   if (!routeProvider) {
@@ -137,6 +254,7 @@ export function ProvidersPage(props: ProvidersPageProps): ReactNode {
     <ProviderDetail
       key={routeProvider.service}
       provider={routeProvider}
+      marketplace={props.data.marketplace}
       connections={configurableConnectionsForProvider(props.data.connections, routeProvider.service)}
       connectionStatus={connectionStatus}
       oauthConfig={oauthConfigForProvider(props.data.oauthConfigs, routeProvider.service)}
@@ -147,9 +265,66 @@ export function ProvidersPage(props: ProvidersPageProps): ReactNode {
 
 function ProviderBrowser(props: ProviderBrowserProps): ReactNode {
   const t = useTranslate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const showHostedSettings = searchParams.get("onekey") === "1";
+  const showHostedOverview = searchParams.get("onekey") === "overview";
+  const showSupportedFeatures =
+    !showHostedOverview && (searchParams.get("features") === "1" || searchParams.get("onekey") === "features");
+  const [oneKeyHidden, setOneKeyHidden] = useState(isOneKeyPromotionHidden);
+  const showHostedCard =
+    (props.data.marketplace?.status !== "available" && (!oneKeyHidden || props.data.marketplace?.configured)) ||
+    showHostedOverview ||
+    showHostedSettings ||
+    showSupportedFeatures;
+  const hiddenNoticeId = useRef<string | number | undefined>(undefined);
+  useEffect(() => {
+    return () => {
+      if (hiddenNoticeId.current !== undefined) toast.dismiss(hiddenNoticeId.current);
+    };
+  }, []);
+  useEffect(() => {
+    if (!showHostedSettings && !showHostedOverview) return;
+    setOneKeyHidden(false);
+    setOneKeyPromotionHidden(false);
+    if (hiddenNoticeId.current !== undefined) toast.dismiss(hiddenNoticeId.current);
+  }, [showHostedOverview, showHostedSettings]);
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
+  const [view, setView] = useState<ProviderBrowserView>("discover");
+  const [managedSource, setManagedSource] = useState<ManagedSourceFilter>("all");
+  const [oneKeyServices, setOneKeyServices] = useState<Set<string>>(() => new Set());
+  const officialMarketplace = isDefaultMarketplace(
+    props.data.marketplace?.discoveryUrl ?? defaultMarketplaceDiscoveryUrl,
+  );
+
+  useEffect(() => {
+    if (!officialMarketplace || (oneKeyHidden && !props.data.marketplace?.configured && !showSupportedFeatures)) return;
+    const controller = new AbortController();
+    void loadDefaultMarketplaceCatalog(controller.signal).then(
+      (catalog) => {
+        const actions = new Set(catalog.actions);
+        setOneKeyServices(
+          new Set(
+            props.data.providers
+              .filter((provider) => provider.actions.some((action) => actions.has(action.id)))
+              .map((provider) => provider.service),
+          ),
+        );
+      },
+      () => setOneKeyServices(new Set()),
+    );
+    return () => controller.abort();
+  }, [
+    officialMarketplace,
+    oneKeyHidden,
+    props.data.marketplace?.configured,
+    props.data.providers,
+    showSupportedFeatures,
+  ]);
   const [statusFilter, setStatusFilter] = useState<ProviderStatusFilter>("all");
-  const resetKey = providerBrowserResetKey(query, statusFilter);
+  const [scenarioFilter, setScenarioFilter] = useState<ProviderDiscoveryScenario | "all">("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const resetKey = providerBrowserResetKey(deferredQuery, statusFilter, categoryFilter, scenarioFilter, view);
   const statusByService = useMemo(
     () =>
       new Map(
@@ -173,8 +348,27 @@ function ProviderBrowser(props: ProviderBrowserProps): ReactNode {
     () => sortProviders(props.data.providers, credentialConnectionsByService),
     [credentialConnectionsByService, props.data.providers],
   );
-  const searchedProviders = filterProviders(sortedProviders, query);
-  const visibleProviders = filterProvidersByStatus(searchedProviders, statusFilter, statusByService);
+  const managedProviders = useMemo(
+    () => sortedProviders.filter((provider) => statusByService.get(provider.service)?.connected),
+    [sortedProviders, statusByService],
+  );
+  const sourceManagedProviders = managedProviders.filter((provider) => {
+    const connections = statusByService.get(provider.service)?.connections ?? [];
+    return (
+      managedSource === "all" ||
+      (managedSource === "built_in" && connections.some((connection) => connection.authType === "marketplace")) ||
+      (managedSource === "own_key" && connections.some((connection) => connection.authType !== "marketplace"))
+    );
+  });
+  const browserProviders = view === "manage" ? sourceManagedProviders : sortedProviders;
+  const searchedProviders = filterProviders(browserProviders, deferredQuery);
+  const scenarioFilteredProviders = filterProvidersByScenario(searchedProviders, scenarioFilter);
+  const categoryFilteredProviders = filterProvidersByCategory(scenarioFilteredProviders, categoryFilter);
+  const statusFilteredProviders =
+    view === "manage"
+      ? scenarioFilteredProviders
+      : filterProvidersByStatus(scenarioFilteredProviders, statusFilter, statusByService, oneKeyServices);
+  const visibleProviders = filterProvidersByCategory(statusFilteredProviders, categoryFilter);
   const {
     hasMore: hasMoreProviders,
     limit: visibleLimit,
@@ -182,77 +376,348 @@ function ProviderBrowser(props: ProviderBrowserProps): ReactNode {
   } = useProgressiveProviderLimit(visibleProviders.length, resetKey);
   const loadMoreProvidersRef = useIntersectionLoader(hasMoreProviders, loadMoreProviders);
   const renderedProviders = visibleProviders.slice(0, visibleLimit);
-  const filtersActive = query.trim().length > 0 || statusFilter !== "all";
+  const filtersActive =
+    query.trim().length > 0 || scenarioFilter !== "all" || categoryFilter !== "all" || statusFilter !== "all";
   const statusCounts = useMemo(
     () =>
-      providerStatusOptions.map((option) => ({
-        ...option,
-        count: countProvidersForStatus(searchedProviders, option.id, statusByService),
-      })),
-    [searchedProviders, statusByService],
+      providerStatusOptions
+        .filter((option) => !oneKeyHidden || option.id !== "one_key")
+        .map((option) => ({
+          ...option,
+          count: countProvidersForStatus(categoryFilteredProviders, option.id, statusByService, oneKeyServices),
+        })),
+    [categoryFilteredProviders, oneKeyHidden, oneKeyServices, statusByService],
   );
+  const categoryCounts = useMemo(() => providerCategoryCounts(statusFilteredProviders), [statusFilteredProviders]);
+  const categoryOptions = useMemo(
+    () =>
+      [
+        ...categoryCounts.entries(),
+        ...(categoryFilter !== "all" && !categoryCounts.has(categoryFilter) ? [[categoryFilter, 0] as const] : []),
+      ]
+        .sort((left, right) => left[0].localeCompare(right[0]))
+        .map(([category, count]) => ({
+          category,
+          count,
+          displayName:
+            props.data.providers.find((provider) => provider.categoryDisplayNames?.[category])?.categoryDisplayNames?.[
+              category
+            ] ?? category,
+        })),
+    [categoryCounts, categoryFilter, props.data.providers],
+  );
+  const scenarioCounts = useMemo(() => providerScenarioCounts(sortedProviders), [sortedProviders]);
 
   function resetFilters(): void {
     setQuery("");
     setStatusFilter("all");
+    setScenarioFilter("all");
+    setCategoryFilter("all");
+  }
+
+  function selectView(nextView: ProviderBrowserView): void {
+    setView(nextView);
+    setQuery("");
+    setStatusFilter("all");
+    setScenarioFilter("all");
+    setCategoryFilter("all");
+  }
+
+  function openHostedSettings(): void {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (next.get("onekey") === "features") next.set("features", "1");
+      next.set("onekey", "1");
+      return next;
+    });
+  }
+
+  function closeHostedSettings(): void {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (next.get("onekey") === "1") next.delete("onekey");
+      return next;
+    });
+  }
+
+  function selectScenario(scenario: ProviderDiscoveryScenario): void {
+    setView("discover");
+    setQuery("");
+    setStatusFilter("all");
+    setScenarioFilter(scenario);
+    setCategoryFilter("all");
   }
 
   return (
-    <section className="provider-browser-panel">
-      <div className="provider-browser-header">
-        <div>
-          <h2>{t("providers.catalogTitle")}</h2>
-        </div>
-        <label className="relative flex w-full max-w-80 items-center sm:w-80">
-          <Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" />
-          <Input
-            className="h-8 pl-9 text-sm"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={t("providers.searchPlaceholder")}
-            aria-label={t("providers.searchPlaceholder")}
+    <Tabs
+      value={view}
+      onValueChange={(value) => selectView(value as ProviderBrowserView)}
+      className="provider-browser-tabs"
+    >
+      <TabsList variant="line" className="provider-browser-tabs-list" aria-label={t("providers.viewLabel")}>
+        <TabsTrigger value="discover" className="flex-none px-4">
+          {t("providers.views.discover")} <span className="provider-view-count">{sortedProviders.length}</span>
+        </TabsTrigger>
+        <TabsTrigger value="manage" className="flex-none px-4">
+          {t("providers.views.manage")} <span className="provider-view-count">{managedProviders.length}</span>
+        </TabsTrigger>
+      </TabsList>
+      {showHostedCard ? (
+        <div className="provider-hosted-section">
+          <HostedAccessCard
+            marketplace={props.data.marketplace}
+            officialMarketplace={officialMarketplace}
+            previewOpen={showSupportedFeatures}
+            serviceCount={oneKeyServices.size}
+            onPreview={() =>
+              setSearchParams((current) => {
+                const next = new URLSearchParams(current);
+                if (next.get("onekey") === "features" || next.get("onekey") === "overview") next.delete("onekey");
+                if (showSupportedFeatures) next.delete("features");
+                else next.set("features", "1");
+                return next;
+              })
+            }
+            onHide={() => {
+              setOneKeyHidden(true);
+              setOneKeyPromotionHidden(true);
+              if (hiddenNoticeId.current !== undefined) toast.dismiss(hiddenNoticeId.current);
+              hiddenNoticeId.current = toast(t("providers.hostedAccess.hiddenTitle"), {
+                description: t("providers.hostedAccess.hiddenNotice"),
+                duration: 8_000,
+                action: {
+                  label: t("common.undo"),
+                  onClick: () => {
+                    setOneKeyHidden(false);
+                    setOneKeyPromotionHidden(false);
+                    if (props.data.marketplace?.status === "available") {
+                      setSearchParams((current) => {
+                        const next = new URLSearchParams(current);
+                        next.set("onekey", "overview");
+                        return next;
+                      });
+                    }
+                  },
+                },
+              });
+              setStatusFilter("all");
+              setSearchParams({});
+            }}
+            onConnect={openHostedSettings}
           />
-        </label>
-      </div>
-
-      <ProviderCollectionBar
-        counts={statusCounts}
-        filtersActive={filtersActive}
-        providerCount={visibleProviders.length}
-        selected={statusFilter}
-        totalProviderCount={props.data.providers.length}
-        onReset={resetFilters}
-        onSelect={setStatusFilter}
-      />
-
-      {visibleProviders.length === 0 ? (
-        <div className="provider-empty-row">
-          <EmptyState title={t("providers.noProvidersTitle")} description={t("providers.noProvidersDescription")} />
-          {filtersActive ? (
-            <Button variant="outline" size="sm" type="button" onClick={resetFilters}>
-              <X size={14} />
-              {t("providers.resetFilters")}
-            </Button>
-          ) : null}
-        </div>
-      ) : (
-        <div className="provider-card-grid">
-          {renderedProviders.map((provider) => (
-            <ProviderCard
-              key={provider.service}
-              provider={provider}
-              status={statusByService.get(provider.service) ?? resolveProviderConnectionStatus(provider, [], [])}
+          {showSupportedFeatures && officialMarketplace ? (
+            <DefaultMarketplaceCatalog
+              embedded
+              providers={props.data.providers}
+              connected={props.data.marketplace?.status === "available"}
             />
-          ))}
-          {hasMoreProviders ? (
-            <div ref={loadMoreProvidersRef} className="provider-show-more">
-              <Button variant="outline" size="sm" type="button" onClick={loadMoreProviders}>
-                {t("providers.showMore")}
-              </Button>
-            </div>
           ) : null}
         </div>
-      )}
+      ) : null}
+      <Dialog
+        open={showHostedSettings}
+        onOpenChange={(open) => {
+          if (!open) closeHostedSettings();
+        }}
+      >
+        <DialogContent className="onekey-connection-dialog">
+          <DialogHeader>
+            <DialogTitle>
+              {t(
+                officialMarketplace
+                  ? props.data.marketplace?.configured
+                    ? "providers.hostedAccess.manage"
+                    : "marketplace.oneKey.connectTitle"
+                  : "marketplace.configuration.title",
+              )}
+            </DialogTitle>
+            <DialogDescription>
+              {t(
+                officialMarketplace ? "marketplace.oneKey.connectDescription" : "marketplace.configuration.description",
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <MarketplacePage
+            data={props.data}
+            embedded
+            onRefresh={props.onRefresh}
+            onCancel={closeHostedSettings}
+            onConnected={() => {
+              selectView("manage");
+              closeHostedSettings();
+            }}
+          />
+        </DialogContent>
+      </Dialog>
+      <TabsContent value="manage" className="provider-browser-tab-content flex flex-col gap-4">
+        {view === "manage" ? (
+          <>
+            {managedProviders.length > 0 ? (
+              <ToggleGroup
+                className="provider-managed-sources"
+                type="single"
+                value={managedSource}
+                onValueChange={(value) => {
+                  if (value) setManagedSource(value as ManagedSourceFilter);
+                }}
+                aria-label={t("providers.managedSources.label")}
+              >
+                <ToggleGroupItem value="all">
+                  {t("providers.managedSources.all")} {managedProviders.length}
+                </ToggleGroupItem>
+                <ToggleGroupItem value="built_in">
+                  {t(officialMarketplace ? "providers.managedSources.builtIn" : "providers.marketplaceBadge")}{" "}
+                  {
+                    managedProviders.filter((provider) => statusByService.get(provider.service)?.marketplaceConnection)
+                      .length
+                  }
+                </ToggleGroupItem>
+                <ToggleGroupItem value="own_key">
+                  {t("providers.managedSources.ownKey")}{" "}
+                  {
+                    managedProviders.filter((provider) =>
+                      statusByService
+                        .get(provider.service)
+                        ?.connections.some((connection) => connection.authType !== "marketplace"),
+                    ).length
+                  }
+                </ToggleGroupItem>
+              </ToggleGroup>
+            ) : null}
+            <ProviderCatalog
+              categoryFilter={categoryFilter}
+              categoryOptions={categoryOptions}
+              filtersActive={filtersActive}
+              hasMoreProviders={hasMoreProviders}
+              loadMoreProviders={loadMoreProviders}
+              loadMoreProvidersRef={loadMoreProvidersRef}
+              onCategoryFilterChange={setCategoryFilter}
+              onQueryChange={setQuery}
+              onReset={resetFilters}
+              providerCount={renderedProviders.length}
+              providers={renderedProviders}
+              query={query}
+              showStatusFilters={false}
+              showBrandNotice={false}
+              emptyTitleKey="providers.managedEmpty.title"
+              emptyDescriptionKey="providers.managedEmpty.description"
+              statusByService={statusByService}
+              oneKeyServices={oneKeyHidden ? new Set() : oneKeyServices}
+              officialMarketplace={officialMarketplace}
+              counts={statusCounts}
+              selected={statusFilter}
+              totalProviderCount={visibleProviders.length}
+            />
+          </>
+        ) : null}
+      </TabsContent>
+      <TabsContent value="discover" className="provider-browser-tab-content flex flex-col gap-6">
+        {view === "discover" ? (
+          <>
+            {!query.trim() ? (
+              <ProviderScenarioGrid counts={scenarioCounts} providers={sortedProviders} onSelect={selectScenario} />
+            ) : null}
+            <ProviderCatalog
+              categoryFilter={categoryFilter}
+              categoryOptions={categoryOptions}
+              filtersActive={filtersActive}
+              hasMoreProviders={hasMoreProviders}
+              loadMoreProviders={loadMoreProviders}
+              loadMoreProvidersRef={loadMoreProvidersRef}
+              onCategoryFilterChange={setCategoryFilter}
+              onQueryChange={setQuery}
+              onReset={resetFilters}
+              onStatusFilterChange={setStatusFilter}
+              providerCount={renderedProviders.length}
+              providers={renderedProviders}
+              query={query}
+              scenarioFilter={scenarioFilter}
+              showStatusFilters
+              showBrandNotice
+              statusByService={statusByService}
+              oneKeyServices={oneKeyHidden ? new Set() : oneKeyServices}
+              officialMarketplace={officialMarketplace}
+              counts={statusCounts}
+              selected={statusFilter}
+              totalProviderCount={visibleProviders.length}
+              onScenarioFilterClear={() => setScenarioFilter("all")}
+            />
+          </>
+        ) : null}
+      </TabsContent>
+    </Tabs>
+  );
+}
+
+function HostedAccessCard(props: HostedAccessCardProps): ReactNode {
+  const t = useTranslate();
+  const available = props.marketplace?.status === "available";
+  const sourceName = props.officialMarketplace
+    ? "OOMOL Key"
+    : (props.marketplace?.marketplace?.name ?? t("nav.marketplace"));
+
+  return (
+    <section className="provider-hosted-access" aria-labelledby="provider-hosted-access-title">
+      <div className="provider-hosted-access-icon">
+        <KeyRound size={20} aria-hidden="true" />
+      </div>
+      <div className="provider-hosted-access-copy">
+        <div className="provider-hosted-access-title">
+          <h2 id="provider-hosted-access-title">{sourceName}</h2>
+          {props.marketplace?.configured ? (
+            <Badge tone={available ? "success" : "warning"}>
+              {t(`marketplace.status.${props.marketplace.status}`)}
+            </Badge>
+          ) : null}
+        </div>
+        <p>
+          {t(
+            props.marketplace?.configured
+              ? props.officialMarketplace
+                ? "providers.hostedAccess.connected"
+                : "providers.hostedAccess.connectedCustom"
+              : "providers.hostedAccess.intro",
+          )}
+        </p>
+      </div>
+      <div className="provider-hosted-access-actions">
+        {props.officialMarketplace ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={props.onPreview}
+            aria-expanded={props.previewOpen}
+            aria-controls="onekey-supported-features"
+          >
+            {t("providers.hostedAccess.features")}
+            {props.serviceCount > 0 ? ` (${props.serviceCount})` : ""}
+            <ChevronDown
+              className={props.previewOpen ? "provider-hosted-chevron-open" : undefined}
+              size={15}
+              aria-hidden="true"
+            />
+          </Button>
+        ) : null}
+        <Button
+          type="button"
+          size="sm"
+          variant={props.marketplace?.configured ? "outline" : "default"}
+          onClick={props.onConnect}
+        >
+          {t(props.marketplace?.configured ? "providers.hostedAccess.manage" : "providers.hostedAccess.connect")}
+        </Button>
+        {!props.marketplace?.configured || available ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={props.onHide}
+            aria-label={t("providers.hostedAccess.hide")}
+            title={t("providers.hostedAccess.hide")}
+          >
+            <X size={15} aria-hidden="true" />
+          </Button>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -319,97 +784,216 @@ function useIntersectionLoader(enabled: boolean, onLoad: () => void): (node: HTM
   return setNode;
 }
 
-function ProviderCollectionBar(props: {
-  counts: Array<{ id: ProviderStatusFilter; labelKey: string; count: number }>;
-  filtersActive: boolean;
-  providerCount: number;
-  selected: ProviderStatusFilter;
-  totalProviderCount: number;
-  onReset(): void;
-  onSelect(value: ProviderStatusFilter): void;
-}): ReactNode {
+function ProviderScenarioGrid(props: ProviderScenarioGridProps): ReactNode {
   const t = useTranslate();
 
   return (
-    <div className="provider-collection-bar">
-      <ToggleGroup
-        className="provider-filter-list"
-        type="single"
-        value={props.selected}
-        onValueChange={(value) => (value ? props.onSelect(value as ProviderStatusFilter) : undefined)}
-        aria-label={t("providers.statusFilterLabel")}
-      >
-        {props.counts.map((option) => (
-          <ToggleGroupItem
-            key={option.id}
-            value={option.id}
-            className="h-8 gap-2 rounded-md border px-3 text-sm data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary/90 data-[state=on]:[&>span:last-child]:text-primary-foreground/70 [&>span:last-child]:text-xs [&>span:last-child]:text-muted-foreground [&>span:last-child]:tabular-nums"
-            disabled={option.count === 0 && option.id !== "all"}
+    <section className="provider-scenario-section" aria-labelledby="provider-discovery-heading">
+      <h2 id="provider-discovery-heading">{t("providers.discovery.browseByTask")}</h2>
+      <div className="provider-scenario-grid">
+        {providerScenarioOptions.map((scenario) => {
+          const Icon = scenarioIconById[scenario.id];
+          const scenarioProviders = featuredProvidersForScenario(
+            props.providers.filter((provider) => providerScenario(provider) === scenario.id),
+            scenario,
+          );
+
+          return (
+            <Button
+              key={scenario.id}
+              type="button"
+              variant="ghost"
+              className="provider-scenario-card"
+              onClick={() => props.onSelect(scenario.id)}
+            >
+              <span className="provider-scenario-card-main">
+                <span className="provider-scenario-icon" aria-hidden="true">
+                  <Icon />
+                </span>
+                <span className="provider-scenario-copy">
+                  <span className="provider-scenario-title">{t(scenario.titleKey)}</span>
+                  <span className="provider-scenario-description">{t(scenario.descriptionKey)}</span>
+                </span>
+                <span className="provider-scenario-count">
+                  {compactProviderCount(props.counts.get(scenario.id) ?? 0)}
+                </span>
+              </span>
+              <span className="provider-scenario-card-footer">
+                <span className="provider-scenario-featured" aria-hidden="true">
+                  {scenarioProviders.map((provider) => (
+                    <ProviderIcon key={provider.service} provider={provider} />
+                  ))}
+                </span>
+                <span className="provider-scenario-action">{t("providers.discovery.explore")}</span>
+              </span>
+            </Button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ProviderCatalog(props: ProviderCatalogProps): ReactNode {
+  const t = useTranslate();
+
+  return (
+    <section className="provider-browser-panel">
+      <div className="provider-browser-header">
+        <h2>{t("providers.catalogTitle")}</h2>
+        <label className="relative flex w-full max-w-80 items-center sm:w-80">
+          <Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" />
+          <Input
+            className="h-8 pl-9 text-sm"
+            value={props.query}
+            onChange={(event) => props.onQueryChange(event.target.value)}
+            placeholder={t("providers.searchPlaceholder")}
+            aria-label={t("providers.searchPlaceholder")}
+          />
+        </label>
+      </div>
+      <div className="provider-collection-bar">
+        {props.showStatusFilters ? (
+          <ToggleGroup
+            className="provider-filter-list"
+            type="single"
+            value={props.selected}
+            onValueChange={(value) => {
+              if (value) props.onStatusFilterChange?.(value as ProviderStatusFilter);
+            }}
+            aria-label={t("providers.statusFilterLabel")}
           >
-            <span>{t(option.labelKey)}</span>
-            <span>{compactProviderCount(option.count)}</span>
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
-      <div className="provider-result-meta">
-        <span>
-          {t("providers.resultCount", {
-            shown: props.providerCount,
-            total: props.totalProviderCount,
-          })}
-        </span>
-        {props.filtersActive ? (
-          <Button variant="ghost" size="xs" type="button" onClick={props.onReset}>
-            <X size={13} />
-            {t("providers.resetFilters")}
+            {props.counts.map((option) => (
+              <ToggleGroupItem
+                key={option.id}
+                value={option.id}
+                className="h-8 gap-2 rounded-md border px-3 text-sm data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary/90 data-[state=on]:[&>span:last-child]:text-primary-foreground/70 [&>span:last-child]:min-w-8 [&>span:last-child]:text-right [&>span:last-child]:text-xs [&>span:last-child]:text-muted-foreground [&>span:last-child]:tabular-nums"
+                disabled={option.count === 0 && option.id !== "all"}
+              >
+                <span>{t(option.labelKey)}</span>
+                <span>{compactProviderCount(option.count)}</span>
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        ) : null}
+        <Select value={props.categoryFilter} onValueChange={props.onCategoryFilterChange}>
+          <SelectTrigger
+            className="h-8 w-48 rounded-md border px-3 text-sm"
+            size="sm"
+            aria-label={t("providers.categoryFilterLabel")}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="p-1" position="popper" align="start">
+            <SelectItem value="all">{t("providers.categories.all")}</SelectItem>
+            {props.categoryOptions.map((option) => (
+              <SelectItem key={option.category} value={option.category}>
+                {option.displayName} ({compactProviderCount(option.count)})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {props.scenarioFilter && props.scenarioFilter !== "all" ? (
+          <Button variant="outline" size="xs" type="button" onClick={props.onScenarioFilterClear}>
+            {t(`providers.discovery.scenarios.${scenarioTranslationKey(props.scenarioFilter)}.title`)}
+            <X data-icon="inline-end" />
           </Button>
         ) : null}
+        <div className="provider-result-meta">
+          <span>
+            {t("providers.resultCount", {
+              shown: props.providerCount,
+              total: props.totalProviderCount,
+            })}
+          </span>
+          {props.filtersActive ? (
+            <Button variant="ghost" size="xs" type="button" onClick={props.onReset}>
+              <X data-icon="inline-start" />
+              {t("providers.resetFilters")}
+            </Button>
+          ) : null}
+        </div>
       </div>
-    </div>
+
+      {props.showBrandNotice ? <p className="provider-brand-notice">{t("providers.brandNotice")}</p> : null}
+
+      {props.providers.length === 0 ? (
+        <div className="provider-empty-row">
+          <EmptyState
+            title={t(props.emptyTitleKey ?? "providers.noProvidersTitle")}
+            description={t(props.emptyDescriptionKey ?? "providers.noProvidersDescription")}
+          />
+          {props.filtersActive ? (
+            <Button variant="outline" size="sm" type="button" onClick={props.onReset}>
+              <X data-icon="inline-start" />
+              {t("providers.resetFilters")}
+            </Button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="provider-card-grid">
+          {props.providers.map((provider) => (
+            <ProviderCard
+              key={provider.service}
+              provider={provider}
+              status={props.statusByService.get(provider.service) ?? resolveProviderConnectionStatus(provider, [], [])}
+              oneKeyAvailable={props.oneKeyServices.has(provider.service)}
+              officialMarketplace={props.officialMarketplace}
+            />
+          ))}
+          {props.hasMoreProviders ? (
+            <div ref={props.loadMoreProvidersRef} className="provider-show-more">
+              <Button variant="outline" size="sm" type="button" onClick={props.loadMoreProviders}>
+                {t("providers.showMore")}
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </section>
   );
+}
+
+function scenarioTranslationKey(scenario: ProviderDiscoveryScenario): string {
+  return scenario === "cross-border-ecommerce"
+    ? "crossBorderEcommerce"
+    : scenario === "data-storage"
+      ? "dataStorage"
+      : scenario;
 }
 
 function ProviderCard(props: ProviderCardProps): ReactNode {
   const t = useTranslate();
   const to = `/providers/${encodeURIComponent(props.provider.service)}`;
-  const locallyAvailable = isProviderLocallyAvailable(props.provider);
-  const actionLabel = !locallyAvailable
-    ? t("providers.buttons.details")
-    : props.status.noSetupRequired
-      ? t("providers.buttons.details")
-      : props.status.connected
-        ? t("providers.buttons.manageConnection")
-        : props.status.oauthClientRequired
-          ? t("providers.buttons.configureOAuthClient")
-          : t("providers.buttons.connect");
+  const locallyAvailable = isProviderLocallyAvailable(props.provider) || Boolean(props.status.marketplaceConnection);
 
   return (
-    <div className="provider-card" style={providerCardStyle}>
-      <Link className="provider-card-main" to={to}>
+    <Link className="provider-card" style={providerCardStyle} to={to}>
+      <span className="provider-card-main">
         <ProviderIcon provider={props.provider} />
-        <span className="provider-card-title-row">
-          <span className="provider-card-title">{props.provider.displayName || props.provider.service}</span>
-          <ProviderStatusBadges status={props.status} locallyAvailable={locallyAvailable} compact />
+        <span className="provider-card-info">
+          <span className="provider-card-title-row">
+            <span className="provider-card-title">{props.provider.displayName || props.provider.service}</span>
+            <ProviderStatusBadges
+              status={props.status}
+              locallyAvailable={locallyAvailable}
+              officialMarketplace={props.officialMarketplace}
+              compact
+              includeDisconnected
+            />
+            {props.oneKeyAvailable && !props.status.connected ? <Badge>{t("providers.oneKey.available")}</Badge> : null}
+          </span>
         </span>
-      </Link>
-      <Link
-        className={
-          locallyAvailable && props.status.connected
-            ? "provider-card-action"
-            : "provider-card-action provider-card-action-muted"
-        }
-        to={to}
-      >
-        <span>{actionLabel}</span>
-        <ChevronRight size={15} />
-      </Link>
-    </div>
+      </span>
+      <ChevronRight className="provider-card-chevron" size={15} aria-hidden="true" />
+    </Link>
   );
 }
 
 function ProviderStatusBadges(props: {
   status: ProviderConnectionStatus;
   locallyAvailable: boolean;
+  officialMarketplace?: boolean;
   compact?: boolean;
   includeDisconnected?: boolean;
 }): ReactNode {
@@ -434,6 +1018,13 @@ function ProviderStatusBadges(props: {
         {t("providers.configuredBadge")}
       </Badge>,
     );
+    if (props.status.marketplaceConnection) {
+      badges.push(
+        <Badge key="marketplace">
+          {t(props.officialMarketplace ? "providers.oneKey.builtIn" : "providers.marketplaceBadge")}
+        </Badge>,
+      );
+    }
     if (props.status.connections.length > 1) {
       badges.push(
         <Badge key="connection-count">
@@ -495,11 +1086,17 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
       ? connectionByName(props.connections, selectedConnectionName)
       : undefined;
   const [selectedAuthType, setSelectedAuthType] = useState(() => initialAuthType(props.provider, selectedConnection));
-  const [oauthClientExpanded, setOAuthClientExpanded] = useState(false);
+  const [oauthAppDialogOpen, setOAuthAppDialogOpen] = useState(false);
+  const [oauthClientMode, setOAuthClientMode] = useState<OAuthClientMode>("configured");
+  const changeOAuthClientMode = useCallback((mode: OAuthClientMode) => setOAuthClientMode(mode), []);
   const selectedAuth = props.provider.auth.find((auth) => auth.type === selectedAuthType) ?? props.provider.auth[0];
   const oauthAuth = props.provider.auth.find((auth) => auth.type === "oauth2");
   const hasMultipleAuthMethods = props.provider.auth.length > 1;
-  const locallyAvailable = isProviderLocallyAvailable(props.provider);
+  const locallyAvailable =
+    isProviderLocallyAvailable(props.provider) ||
+    Boolean(props.connectionStatus.marketplaceConnection) ||
+    props.oauthConfig?.oauthSource?.mode === "saas" ||
+    Boolean(selectedConnection?.saas);
   const supportsCredentialConnections = props.provider.auth.some((auth) => shouldShowConnectionActions(auth));
   const connectionEditorOpen = !supportsCredentialConnections || creatingConnection || selectedConnection != null;
   const formConnectionName = creatingConnection ? newConnectionName.trim() : (selectedConnectionName ?? "");
@@ -531,6 +1128,7 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
         setNewConnectionName("");
         setPendingConnectionName(undefined);
         setSelectedAuthType(initialAuthType(props.provider, createdConnection));
+        setOAuthClientMode("configured");
       }
       return;
     }
@@ -543,6 +1141,7 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
       } else {
         setSelectedConnectionName(undefined);
         setSelectedAuthType(initialAuthType(props.provider, undefined));
+        setOAuthClientMode("configured");
       }
       return;
     }
@@ -557,16 +1156,13 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
     setSelectedAuthType(initialAuthType(props.provider, selectedConnection));
   }, [props.provider.service, selectedConnection?.authType]);
 
-  useEffect(() => {
-    setOAuthClientExpanded(false);
-  }, [props.provider.service, props.oauthConfig?.clientId]);
-
   function selectConnection(connectionName: string): void {
     const connection = connectionByName(props.connections, connectionName);
     setSelectedConnectionName(connectionName);
     setCreatingConnection(false);
     setNewConnectionName("");
     setSelectedAuthType(initialAuthType(props.provider, connection));
+    setOAuthClientMode("configured");
   }
 
   function startNewConnection(): void {
@@ -575,13 +1171,14 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
     setNewConnectionName("");
     setPendingConnectionName(undefined);
     setSelectedAuthType(initialAuthType(props.provider, undefined));
-    setOAuthClientExpanded(false);
+    setOAuthClientMode("configured");
   }
 
   function cancelNewConnection(): void {
     setCreatingConnection(false);
     setNewConnectionName("");
     setPendingConnectionName(undefined);
+    setOAuthClientMode("configured");
   }
 
   function clearConnectionSelection(): void {
@@ -590,7 +1187,7 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
     setNewConnectionName("");
     setPendingConnectionName(undefined);
     setSelectedAuthType(initialAuthType(props.provider, undefined));
-    setOAuthClientExpanded(false);
+    setOAuthClientMode("configured");
   }
 
   return (
@@ -609,6 +1206,9 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
               <ProviderStatusBadges
                 status={props.connectionStatus}
                 locallyAvailable={locallyAvailable}
+                officialMarketplace={isDefaultMarketplace(
+                  props.marketplace?.discoveryUrl ?? defaultMarketplaceDiscoveryUrl,
+                )}
                 includeDisconnected
               />
             </div>
@@ -635,6 +1235,12 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
         </div>
       </div>
 
+      <OneKeyProviderOption
+        marketplace={props.marketplace}
+        provider={props.provider}
+        connected={Boolean(props.connectionStatus.marketplaceConnection)}
+      />
+
       <div className="provider-detail-layout">
         <section className="detail-panel provider-detail-card provider-connection-card">
           <div className="provider-panel-title-row">
@@ -643,6 +1249,41 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
               <p>{connectionDescription}</p>
             </div>
           </div>
+          {props.connectionStatus.marketplaceConnection ? (
+            <div className="provider-marketplace-connection">
+              <div>
+                <strong>
+                  {t(
+                    isDefaultMarketplace(props.marketplace?.discoveryUrl ?? defaultMarketplaceDiscoveryUrl)
+                      ? "providers.oneKey.connectedTitle"
+                      : "providers.marketplaceConnection.title",
+                  )}
+                </strong>
+                <span>
+                  {t(
+                    isDefaultMarketplace(props.marketplace?.discoveryUrl ?? defaultMarketplaceDiscoveryUrl)
+                      ? "providers.oneKey.connectedDescription"
+                      : "providers.marketplaceConnection.description",
+                    {
+                      name:
+                        typeof props.connectionStatus.marketplaceConnection.profile?.displayName === "string"
+                          ? props.connectionStatus.marketplaceConnection.profile.displayName
+                          : t("nav.marketplace"),
+                    },
+                  )}
+                </span>
+              </div>
+              <Button asChild variant="outline" size="sm">
+                <Link to="/providers?onekey=1">
+                  {t(
+                    isDefaultMarketplace(props.marketplace?.discoveryUrl ?? defaultMarketplaceDiscoveryUrl)
+                      ? "providers.hostedAccess.manage"
+                      : "providers.marketplaceConnection.manage",
+                  )}
+                </Link>
+              </Button>
+            </div>
+          ) : null}
           {supportsCredentialConnections && (locallyAvailable || props.connections.length > 0) ? (
             <ConnectionManager
               connections={props.connections}
@@ -665,7 +1306,12 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
               value={selectedAuth?.type}
               spacing={0}
               aria-label={t("providers.connectionMethod")}
-              onValueChange={(value) => (value ? setSelectedAuthType(value as AuthDefinition["type"]) : undefined)}
+              onValueChange={(value) => {
+                if (value) {
+                  setSelectedAuthType(value as AuthDefinition["type"]);
+                  setOAuthClientMode("configured");
+                }
+              }}
             >
               {props.provider.auth.map((auth) => (
                 <ToggleGroupItem
@@ -694,8 +1340,10 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
               connectionName={formConnectionName}
               connectionNameValid={!newConnectionNameError}
               oauthConfig={props.oauthConfig}
+              oauthClientMode={oauthClientMode}
               onRefresh={props.onRefresh}
-              onConfigureOAuthClient={() => setOAuthClientExpanded(true)}
+              onConfigureOAuthClient={() => setOAuthAppDialogOpen(true)}
+              onOAuthClientModeChange={changeOAuthClientMode}
               onConnectionPendingChange={creatingConnection ? setPendingConnectionName : undefined}
             />
           ) : (
@@ -704,19 +1352,6 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
               description={t("providers.noConnectionMethodDescription")}
             />
           )}
-          {connectionEditorOpen && locallyAvailable && oauthAuth && selectedAuth?.type === "oauth2" ? (
-            <div className="provider-inline-oauth-settings">
-              <h3>{t("providers.oauthClient")}</h3>
-              <OAuthClientSettings
-                provider={props.provider}
-                auth={oauthAuth}
-                config={props.oauthConfig}
-                expanded={oauthClientExpanded}
-                onToggle={() => setOAuthClientExpanded((value) => !value)}
-                onRefresh={props.onRefresh}
-              />
-            </div>
-          ) : null}
         </section>
 
         <section className="detail-panel provider-detail-card">
@@ -760,12 +1395,18 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
           )}
         </section>
       </div>
+      {oauthAuth ? (
+        <OAuthAppDialog
+          open={oauthAppDialogOpen}
+          provider={props.provider}
+          auth={oauthAuth}
+          config={props.oauthConfig}
+          onOpenChange={setOAuthAppDialogOpen}
+          onRefresh={props.onRefresh}
+        />
+      ) : null}
     </div>
   );
-}
-
-export function shouldShowOAuthClientForm(auth: AuthDefinition | undefined, expanded: boolean): boolean {
-  return auth?.type === "oauth2" && expanded;
 }
 
 export function isProviderLocallyAvailable(provider: ProviderDefinition): boolean {
@@ -780,8 +1421,29 @@ export function shouldShowDisconnectAction(connection: AppData["connections"][nu
   return connection != null;
 }
 
-export function shouldEnableConnectionSubmit(auth: AuthDefinition, oauthConfig: OAuthConfig | undefined): boolean {
-  return auth.type !== "oauth2" || oauthConfig != null;
+export function shouldEnableConnectionSubmit(
+  auth: AuthDefinition,
+  oauthConfig: OAuthConfig | undefined,
+  manualValues?: ManualOAuthClientValues,
+): boolean {
+  if (auth.type !== "oauth2") {
+    return true;
+  }
+  if (!manualValues) {
+    return oauthConfig?.configured ?? false;
+  }
+  if (!manualValues.clientId.trim()) {
+    return false;
+  }
+  if (
+    auth.clientFields?.some((field) => field.key === "clientSecret" && field.required) &&
+    !manualValues.clientSecret.trim()
+  ) {
+    return false;
+  }
+  return clientConfigFieldsFor(auth).every(
+    (field) => !field.required || Boolean(manualValues.extraValues[field.key]?.trim()),
+  );
 }
 
 export function connectionSubmitLabel(auth: AuthDefinition, connected: boolean, providerName: string): string {
@@ -789,17 +1451,6 @@ export function connectionSubmitLabel(auth: AuthDefinition, connected: boolean, 
     return `${connected ? "Reconnect" : "Connect"} ${providerName}`;
   }
   return "Save Connection";
-}
-
-export function oauthClientActionLabel(config: OAuthConfig | undefined): string {
-  return config ? "Edit OAuth Client" : "Configure OAuth Client";
-}
-
-export function shouldClearOAuthClientStatus(input: {
-  providerChanged: boolean;
-  skipNextConfigClear: boolean;
-}): boolean {
-  return input.providerChanged || !input.skipNextConfigClear;
 }
 
 export interface OAuthPopupPlacement {
@@ -848,12 +1499,16 @@ function initialAuthType(
 }
 
 function authLabel(auth: AuthDefinition, t: (key: string) => string): string {
+  if (auth.type === "custom_credential" && auth.label?.trim()) return auth.label.trim();
   return authTypeLabel(auth.type, t);
 }
 
 function providerAuthTypeLabels(provider: ProviderDefinition, t: (key: string) => string): string[] {
   const authTypes = provider.authTypes.length > 0 ? provider.authTypes : provider.auth.map((auth) => auth.type);
-  return [...new Set(authTypes)].map((authType) => authTypeLabel(authType, t));
+  return [...new Set(authTypes)].map((authType) => {
+    const auth = provider.auth.find((auth) => auth.type === authType);
+    return auth ? authLabel(auth, t) : authTypeLabel(authType, t);
+  });
 }
 
 function authTypeLabel(authType: string, t: (key: string) => string): string {
@@ -868,7 +1523,9 @@ export function configurableConnectionsForProvider(
   connections: ConnectionRecord[],
   service: string,
 ): ConnectionRecord[] {
-  return usableConnectionsForService(connections, service);
+  return usableConnectionsForService(connections, service).filter(
+    (connection) => connection.authType !== "marketplace",
+  );
 }
 
 export function connectionDisplayLabel(connection: ConnectionRecord): string {
@@ -912,8 +1569,24 @@ export function credentialConnectionRequestBody(
   return authType === "no_auth" ? { authType, connectionName } : { authType, connectionName, values };
 }
 
-export function oauthAuthorizationRequestBody(service: string, connectionName: string): Record<string, string> {
-  return { service, connectionName };
+export function oauthAuthorizationRequestBody(
+  service: string,
+  connectionName: string,
+  manual?: ManualOAuthAuthorizationInput,
+  authorizationOptionIds?: string[],
+): OAuthAuthorizationRequestBody {
+  const body: OAuthAuthorizationRequestBody = { service, connectionName, authorizationOptionIds };
+  if (manual) {
+    const { extra, secretExtra } = splitClientConfigFieldValues(
+      clientConfigFieldsFor(manual.auth),
+      manual.values.extraValues,
+    );
+    body.clientId = manual.values.clientId;
+    body.clientSecret = manual.values.clientSecret;
+    body.extra = extra;
+    body.secretExtra = secretExtra;
+  }
+  return body;
 }
 
 function ConnectionManager(props: ConnectionManagerProps): ReactNode {
@@ -937,7 +1610,10 @@ function ConnectionManager(props: ConnectionManagerProps): ReactNode {
                       <Badge>{t("providers.defaultConnection")}</Badge>
                     ) : null}
                   </div>
-                  <small>{authTypeLabel(connection.authType, t)}</small>
+                  <small>
+                    {authTypeLabel(connection.authType, t)}
+                    {connection.authType === "oauth2" ? " · " + t(connection.saas ? "saas.remote" : "saas.local") : ""}
+                  </small>
                 </div>
                 <Button
                   variant={selected ? "default" : "outline"}
@@ -956,9 +1632,9 @@ function ConnectionManager(props: ConnectionManagerProps): ReactNode {
       ) : null}
 
       {props.creating ? (
-        <div className="connection-manager-new">
-          <Label className="field" htmlFor={inputId}>
-            <span>{t("providers.connectionName")}</span>
+        <div className="field connection-manager-new">
+          <Label htmlFor={inputId}>{t("providers.connectionName")}</Label>
+          <div className="connection-manager-input-row">
             <Input
               id={inputId}
               maxLength={64}
@@ -969,19 +1645,19 @@ function ConnectionManager(props: ConnectionManagerProps): ReactNode {
               value={props.newConnectionName}
               onChange={(event) => props.onNewConnectionNameChange(event.target.value)}
             />
-            <small id={errorId} className={props.newConnectionNameError ? "field-error" : undefined}>
-              {t(
-                props.newConnectionNameError
-                  ? `providers.connectionNameErrors.${props.newConnectionNameError}`
-                  : "providers.connectionNameDescription",
-              )}
-            </small>
-          </Label>
-          {props.connections.length > 0 ? (
-            <Button variant="outline" type="button" onClick={props.onCancel}>
-              {t("providers.buttons.cancel")}
-            </Button>
-          ) : null}
+            {props.connections.length > 0 ? (
+              <Button variant="outline" type="button" onClick={props.onCancel}>
+                {t("providers.buttons.cancel")}
+              </Button>
+            ) : null}
+          </div>
+          <small id={errorId} className={props.newConnectionNameError ? "field-error" : undefined}>
+            {t(
+              props.newConnectionNameError
+                ? `providers.connectionNameErrors.${props.newConnectionNameError}`
+                : "providers.connectionNameDescription",
+            )}
+          </small>
         </div>
       ) : (
         <div className="connection-manager-actions">
@@ -1010,16 +1686,24 @@ function UnavailableProviderConnection(props: {
   onRefresh(): void;
 }): ReactNode {
   const t = useTranslate();
+  const [pending, setPending] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
   async function disconnect(): Promise<void> {
+    setPending(true);
     setStatus(t("providers.connectionMessages.disconnecting"));
     try {
       await apiDelete(connectionDeletePath(props.provider.service, props.connectionName));
-      setStatus(t("providers.connectionMessages.disconnected"));
+      setStatus(null);
+      toast.success(t("providers.connectionMessages.disconnectNotice", { name: props.connectionName }), {
+        description: props.connection?.saas ? t("providers.connectionMessages.cloudDisconnectNotice") : undefined,
+      });
       props.onRefresh();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : t("providers.connectionMessages.disconnectFailed"));
+      toast.error(t("providers.connectionMessages.disconnectFailed"));
+    } finally {
+      setPending(false);
     }
   }
 
@@ -1034,7 +1718,7 @@ function UnavailableProviderConnection(props: {
       </Alert>
       {props.connection ? (
         <div className="button-row">
-          <Button variant="outline" type="button" onClick={() => void disconnect()}>
+          <Button variant="outline" type="button" disabled={pending} onClick={() => void disconnect()}>
             <Trash2 size={16} />
             {t("providers.buttons.disconnect")}
           </Button>
@@ -1047,17 +1731,50 @@ function UnavailableProviderConnection(props: {
 
 function ConnectionForm(props: ConnectionFormProps): ReactNode {
   const t = useTranslate();
+  const remote = props.auth.type === "oauth2" && usesSaasOAuth(props.connection, props.oauthConfig);
+  const [pending, setPending] = useState(false);
+  const [authorizationUrl, setAuthorizationUrl] = useState<string>();
   const [values, setValues] = useState<Record<string, string>>({});
+  const authorizationOptions = props.auth.type === "oauth2" && !remote ? props.auth.authorizationOptions : undefined;
+  const { selectedOptionIds: selectedAuthorizationOptionIds, toggleOption } = useOAuthAuthorizationOptions(
+    authorizationOptions,
+    props.connection?.profile?.grantedScopes,
+  );
+  const [manualClientId, setManualClientId] = useState("");
+  const [manualClientSecret, setManualClientSecret] = useState("");
+  const manualClientConfigFields = useMemo(() => clientConfigFieldsFor(props.auth), [props.auth]);
+  const [manualExtraValues, setManualExtraValues] = useState(() =>
+    initialClientConfigFieldValues(manualClientConfigFields, undefined),
+  );
   const [status, setStatus] = useState<string | null>(null);
   const stopOAuthRefreshPolling = useRef<(() => void) | undefined>(undefined);
+  const authDescription = props.auth.type === "custom_credential" ? props.auth.description : undefined;
   const fields = credentialFieldsFor(props.auth);
   const showActions = shouldShowConnectionActions(props.auth);
   const connected = props.connection != null;
-  const needsOAuthClient = props.auth.type === "oauth2" && !props.oauthConfig;
+  const customOAuthClientAvailable =
+    props.auth.type === "oauth2" &&
+    !remote &&
+    props.oauthConfig?.oauthSource?.mode !== "saas" &&
+    (props.oauthConfig?.customClientAvailable ?? false);
+  const manualValues: ManualOAuthClientValues = {
+    clientId: manualClientId,
+    clientSecret: manualClientSecret,
+    extraValues: manualExtraValues,
+  };
+  const needsOAuthClient =
+    props.auth.type === "oauth2" && !remote && props.oauthClientMode === "configured" && !props.oauthConfig?.configured;
   const canSubmit =
     props.connectionName.length > 0 &&
     props.connectionNameValid &&
-    shouldEnableConnectionSubmit(props.auth, props.oauthConfig);
+    !pending &&
+    (remote ||
+      ((props.oauthClientMode !== "manual" || customOAuthClientAvailable) &&
+        shouldEnableConnectionSubmit(
+          props.auth,
+          props.oauthConfig,
+          props.oauthClientMode === "manual" ? manualValues : undefined,
+        )));
   const submitLabel =
     props.auth.type === "oauth2"
       ? t(connected ? "providers.buttons.reconnectProvider" : "providers.buttons.connectProvider", {
@@ -1073,13 +1790,12 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
   );
 
   useEffect(() => {
-    if (props.connection) {
-      stopOAuthRefreshPolling.current?.();
-      stopOAuthRefreshPolling.current = undefined;
+    if (!customOAuthClientAvailable && props.oauthClientMode === "manual") {
+      props.onOAuthClientModeChange("configured");
     }
-  }, [props.connection]);
+  }, [customOAuthClientAvailable, props.oauthClientMode, props.onOAuthClientModeChange]);
 
-  async function submit(event: FormEvent): Promise<void> {
+  async function submit(event: SubmitEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!canSubmit) {
       if (needsOAuthClient) {
@@ -1094,6 +1810,8 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
         ? t("providers.connectionMessages.openingOAuth")
         : t("providers.connectionMessages.saving"),
     );
+    setPending(true);
+    setAuthorizationUrl(undefined);
     props.onConnectionPendingChange?.(connectionName);
     try {
       if (props.auth.type === "no_auth") {
@@ -1112,10 +1830,28 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
           credentialConnectionRequestBody("custom_credential", connectionName, values),
         );
       } else {
-        const result = await apiPost<{ authorizationUrl?: string }>(
-          `/api/oauth/authorizations`,
-          oauthAuthorizationRequestBody(props.provider.service, connectionName),
-        );
+        const manual = props.oauthClientMode === "manual" && !remote;
+        const trackRequest = remote || Boolean(props.connection && props.oauthConfig?.oauthSource?.mode === "saas");
+        const result = !trackRequest
+          ? await apiPost<{ authorizationUrl: string; connectionRequestId?: string; expiresAt?: string }>(
+              "/api/oauth/authorizations",
+              oauthAuthorizationRequestBody(
+                props.provider.service,
+                connectionName,
+                manual ? { auth: props.auth, values: manualValues } : undefined,
+                selectedAuthorizationOptionIds,
+              ),
+            )
+          : await apiPost<{ authorizationUrl: string; connectionRequestId: string; expiresAt: string }>(
+              "/api/oauth/connection-requests",
+              {
+                service: props.provider.service,
+                connectionName,
+                appId: props.connection?.id,
+                authorizationOptionIds: authorizationOptions ? selectedAuthorizationOptionIds : undefined,
+              },
+            );
+        setAuthorizationUrl(result.authorizationUrl);
         if (result.authorizationUrl) {
           window.open(
             result.authorizationUrl,
@@ -1128,7 +1864,29 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
             }),
           );
           stopOAuthRefreshPolling.current?.();
-          stopOAuthRefreshPolling.current = startOAuthRefreshPolling(props.onRefresh);
+          stopOAuthRefreshPolling.current =
+            trackRequest && result.connectionRequestId && result.expiresAt
+              ? watchOAuthRequest({
+                  id: result.connectionRequestId,
+                  remote,
+                  expiresAt: result.expiresAt,
+                  onUpdate(request) {
+                    if (request.status === "initiated") return;
+                    setStatus(
+                      request.status === "connected"
+                        ? t("saas.connected")
+                        : (request.errorMessage ?? t("saas.manualResult")),
+                    );
+                    setAuthorizationUrl(undefined);
+                    if (request.status === "failed" || request.status === "expired")
+                      props.onConnectionPendingChange?.(undefined);
+                    props.onRefresh();
+                  },
+                  onError(error) {
+                    setStatus(error instanceof Error ? error.message : t("saas.failed"));
+                  },
+                })
+              : startOAuthRefreshPolling(props.onRefresh);
         }
         setStatus(t("providers.connectionMessages.oauthWindowOpened"));
         return;
@@ -1138,17 +1896,26 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
     } catch (error) {
       props.onConnectionPendingChange?.(undefined);
       setStatus(error instanceof Error ? error.message : t("providers.connectionMessages.failed"));
+    } finally {
+      setPending(false);
     }
   }
 
   async function disconnect(): Promise<void> {
+    setPending(true);
     setStatus(t("providers.connectionMessages.disconnecting"));
     try {
       await apiDelete(connectionDeletePath(props.provider.service, props.connectionName));
-      setStatus(t("providers.connectionMessages.disconnected"));
+      setStatus(null);
+      toast.success(t("providers.connectionMessages.disconnectNotice", { name: props.connectionName }), {
+        description: props.connection?.saas ? t("providers.connectionMessages.cloudDisconnectNotice") : undefined,
+      });
       props.onRefresh();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : t("providers.connectionMessages.disconnectFailed"));
+      toast.error(t("providers.connectionMessages.disconnectFailed"));
+    } finally {
+      setPending(false);
     }
   }
 
@@ -1160,18 +1927,111 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
           <AlertDescription>{t("providers.connectionMessages.noAuth")}</AlertDescription>
         </Alert>
       ) : null}
+      {props.auth.type === "oauth2" && customOAuthClientAvailable ? (
+        <ToggleGroup
+          className="auth-method-control bg-muted p-[3px]"
+          type="single"
+          value={props.oauthClientMode}
+          spacing={0}
+          aria-label={t("providers.oauthAppMode")}
+          onValueChange={(value) => {
+            if (value === "configured" || value === "manual") {
+              props.onOAuthClientModeChange(value);
+              setStatus(null);
+            }
+          }}
+        >
+          <ToggleGroupItem
+            value="configured"
+            className="h-[30px] rounded-md px-3 text-sm data-[state=on]:bg-background data-[state=on]:shadow-none"
+          >
+            {t("providers.oauthAppModes.configured")}
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="manual"
+            className="h-[30px] rounded-md px-3 text-sm data-[state=on]:bg-background data-[state=on]:shadow-none"
+          >
+            {t("providers.oauthAppModes.manual")}
+          </ToggleGroupItem>
+        </ToggleGroup>
+      ) : null}
       {props.auth.type === "oauth2" ? (
         <Alert variant={needsOAuthClient ? "warning" : "default"}>
           {needsOAuthClient ? <Settings size={16} /> : <ExternalLink size={16} />}
           <AlertDescription>
-            {needsOAuthClient
-              ? t("providers.connectionMessages.needsOAuthClient", { name: props.provider.displayName })
-              : connected
-                ? t("providers.connectionMessages.connectedOAuth", { name: props.provider.displayName })
-                : t("providers.connectionMessages.connectOAuth", { name: props.provider.displayName })}
+            {remote
+              ? t("saas.remoteNotice")
+              : needsOAuthClient
+                ? t("providers.connectionMessages.needsOAuthClient", { name: props.provider.displayName })
+                : props.oauthClientMode === "manual"
+                  ? t("providers.connectionMessages.manualOAuthClient", { name: props.provider.displayName })
+                  : connected
+                    ? t("providers.connectionMessages.connectedOAuth", { name: props.provider.displayName })
+                    : t("providers.connectionMessages.connectOAuth", { name: props.provider.displayName })}
           </AlertDescription>
         </Alert>
       ) : null}
+      {props.auth.type === "oauth2" && !remote && props.oauthClientMode === "manual" ? (
+        <>
+          {props.oauthConfig?.expectedRedirectUri ? (
+            <Label className="field">
+              <span>{t("providers.oauthClientSettings.callbackUrl")}</span>
+              <Input className="font-mono text-xs" value={props.oauthConfig.expectedRedirectUri} readOnly />
+            </Label>
+          ) : null}
+          <Label className="field">
+            <span>{t("providers.oauthClientSettings.clientId")}</span>
+            <Input value={manualClientId} onChange={(event) => setManualClientId(event.target.value)} required />
+          </Label>
+          <Label className="field">
+            <span>{t("providers.oauthClientSettings.clientSecret")}</span>
+            <Input
+              type="password"
+              value={manualClientSecret}
+              onChange={(event) => setManualClientSecret(event.target.value)}
+              required={props.auth.clientFields?.some((field) => field.key === "clientSecret" && field.required)}
+            />
+          </Label>
+          {manualClientConfigFields.map((field) => (
+            <CredentialInput
+              key={field.key}
+              field={field}
+              value={manualExtraValues[field.key] ?? ""}
+              onChange={(value) =>
+                setManualExtraValues((previous) => ({
+                  ...previous,
+                  [field.key]: value,
+                }))
+              }
+            />
+          ))}
+        </>
+      ) : null}
+      {authorizationOptions?.length ? (
+        <div className="form-grid">
+          <Label>
+            <span>Permissions</span>
+          </Label>
+          {authorizationOptions.map((option) => {
+            const checked = selectedAuthorizationOptionIds.includes(option.id);
+            return (
+              <label key={option.id} className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={option.required}
+                  onChange={(event) => toggleOption(option.id, event.target.checked)}
+                />
+                <span>
+                  <strong>{option.label}</strong>
+                  <small className="block text-muted-foreground">{option.description}</small>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      ) : null}
+      {authDescription ? <small className="block text-muted-foreground">{authDescription}</small> : null}
       {fields.map((field) => (
         <CredentialInput
           key={field.key}
@@ -1188,180 +2048,34 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
               {t("providers.buttons.configureOAuthClient")}
             </Button>
           ) : (
-            <Button type="submit" disabled={!canSubmit}>
-              {props.auth.type === "oauth2" ? <ExternalLink size={16} /> : <Check size={16} />}
-              {submitLabel}
-            </Button>
+            <>
+              <Button type="submit" disabled={!canSubmit}>
+                {props.auth.type === "oauth2" ? <ExternalLink size={16} /> : <Check size={16} />}
+                {submitLabel}
+              </Button>
+              {props.auth.type === "oauth2" && (remote || props.oauthClientMode === "configured") ? (
+                <Button variant="outline" type="button" onClick={props.onConfigureOAuthClient}>
+                  <Settings size={16} />
+                  {t("saas.authorizationSettings")}
+                </Button>
+              ) : null}
+            </>
           )}
           {shouldShowDisconnectAction(props.connection) ? (
-            <Button variant="outline" type="button" onClick={() => void disconnect()}>
+            <Button variant="outline" type="button" disabled={pending} onClick={() => void disconnect()}>
               <Trash2 size={16} />
               {t("providers.buttons.disconnect")}
             </Button>
           ) : null}
         </div>
       ) : null}
-      {status ? <FormStatus message={status} /> : null}
-    </form>
-  );
-}
-
-function OAuthClientSettings(props: {
-  provider: ProviderDefinition;
-  auth: AuthDefinition;
-  config?: OAuthConfig;
-  expanded: boolean;
-  onToggle(): void;
-  onRefresh(): void;
-}): ReactNode {
-  const t = useTranslate();
-  const [status, setStatus] = useState<string | null>(null);
-  const previousProviderService = useRef(props.provider.service);
-  const skipNextConfigClear = useRef(false);
-
-  useEffect(() => {
-    const providerChanged = previousProviderService.current !== props.provider.service;
-    previousProviderService.current = props.provider.service;
-    const shouldClear = shouldClearOAuthClientStatus({
-      providerChanged,
-      skipNextConfigClear: skipNextConfigClear.current,
-    });
-    skipNextConfigClear.current = false;
-    if (shouldClear) {
-      setStatus(null);
-    }
-  }, [props.provider.service, props.config?.clientId]);
-
-  async function reset(): Promise<void> {
-    setStatus(t("providers.oauthClientSettings.resetting"));
-    try {
-      await apiDelete(`/api/oauth/configs/${props.provider.service}`);
-      setStatus(t("providers.oauthClientSettings.reset"));
-      skipNextConfigClear.current = true;
-      props.onRefresh();
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : t("providers.oauthClientSettings.resetFailed"));
-    }
-  }
-
-  return (
-    <div className="oauth-client-settings">
-      <div className="oauth-client-summary">
-        <div className="oauth-client-summary-main">
-          <div className="oauth-client-title">
-            <KeyRound size={16} />
-            <strong>
-              {props.config
-                ? t("providers.oauthClientSettings.configuredTitle")
-                : t("providers.oauthClientSettings.requiredTitle")}
-            </strong>
-            <Badge tone={props.config ? "success" : "warning"}>
-              {props.config ? t("providers.summary.configured") : t("providers.summary.required")}
-            </Badge>
-          </div>
-          <p className={props.config?.clientId ? "oauth-client-id" : "oauth-client-description"}>
-            {props.config?.clientId
-              ? props.config.clientId
-              : t("providers.oauthClientSettings.missingDescription", { name: props.provider.displayName })}
-          </p>
-        </div>
-        <div className="oauth-client-actions">
-          <Button variant="outline" size="sm" type="button" onClick={props.onToggle}>
-            <Settings size={14} />
-            {props.expanded
-              ? t("common.close")
-              : t(props.config ? "providers.buttons.editOAuthClient" : "providers.buttons.configureOAuthClient")}
-          </Button>
-          {props.config ? (
-            <Button variant="outline" size="sm" type="button" onClick={() => void reset()}>
-              <Trash2 size={14} />
-              {t("providers.buttons.resetOAuthClient")}
-            </Button>
-          ) : null}
-        </div>
-      </div>
-      {status ? <FormStatus message={status} /> : null}
-      {shouldShowOAuthClientForm(props.auth, props.expanded) ? (
-        <div className="oauth-client-editor">
-          <OAuthConfigForm provider={props.provider} config={props.config} onRefresh={props.onRefresh} />
-        </div>
+      {authorizationUrl ? (
+        <a className="text-sm underline" href={authorizationUrl} target="_blank" rel="noopener noreferrer">
+          {t("saas.pending")}
+        </a>
       ) : null}
-    </div>
-  );
-}
-
-function OAuthConfigForm(props: OAuthConfigFormProps): ReactNode {
-  const t = useTranslate();
-  const [clientId, setClientId] = useState(() => props.config?.clientId ?? "");
-  const [clientSecret, setClientSecret] = useState("");
-  const [status, setStatus] = useState<string | null>(null);
-
-  useEffect(() => {
-    setClientId(props.config?.clientId ?? "");
-    setClientSecret("");
-    setStatus(null);
-  }, [props.provider.service, props.config?.clientId]);
-
-  async function submit(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    setStatus(t("providers.oauthClientSettings.saving"));
-    try {
-      await apiPut(`/api/oauth/configs/${props.provider.service}`, {
-        clientId,
-        clientSecret,
-        extra: {},
-      });
-      setStatus(t("providers.oauthClientSettings.saved"));
-      props.onRefresh();
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : t("providers.oauthClientSettings.failed"));
-    }
-  }
-
-  return (
-    <form className="form-grid" onSubmit={(event) => void submit(event)}>
-      <Label className="field">
-        <span>{t("providers.oauthClientSettings.clientId")}</span>
-        <Input value={clientId} onChange={(event) => setClientId(event.target.value)} />
-      </Label>
-      <Label className="field">
-        <span>{t("providers.oauthClientSettings.clientSecret")}</span>
-        <Input type="password" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} />
-        {props.config ? <small>{t("providers.oauthClientSettings.storedSecretHint")}</small> : null}
-      </Label>
-      <div className="button-row">
-        <Button type="submit">
-          <Settings size={16} />
-          {props.config ? t("providers.buttons.updateOAuthClient") : t("providers.buttons.saveOAuthClient")}
-        </Button>
-      </div>
       {status ? <FormStatus message={status} /> : null}
     </form>
-  );
-}
-
-function CredentialInput(props: { field: CredentialField; value: string; onChange(value: string): void }): ReactNode {
-  return (
-    <Label className="field">
-      <span>{props.field.label}</span>
-      {props.field.inputType === "textarea" || props.field.inputType === "json" ? (
-        <Textarea
-          className="min-h-24 resize-y font-mono text-xs leading-relaxed"
-          value={props.value}
-          placeholder={props.field.placeholder}
-          onChange={(event) => props.onChange(event.target.value)}
-          spellCheck={false}
-        />
-      ) : (
-        <Input
-          type={props.field.secret ? "password" : "text"}
-          placeholder={props.field.placeholder}
-          value={props.value}
-          onChange={(event) => props.onChange(event.target.value)}
-        />
-      )}
-      {props.field.description ? <small>{props.field.description}</small> : null}
-    </Label>
   );
 }
 
@@ -1369,13 +2083,16 @@ function filterProvidersByStatus(
   providers: ProviderDefinition[],
   status: ProviderStatusFilter,
   statusByService: Map<string, ProviderConnectionStatus>,
+  oneKeyServices: Set<string>,
 ): ProviderDefinition[] {
   if (status === "all") return providers;
+  if (status === "one_key") return providers.filter((provider) => oneKeyServices.has(provider.service));
   return providers.filter((provider) => {
     const providerStatus = statusByService.get(provider.service);
-    if (status === "connected") return providerStatus?.connected === true;
-    if (status === "not_connected") return providerStatus?.connected !== true;
-    return providerStatus?.oauthClientRequired === true;
+    if (status === "connected") return providerStatus?.connected;
+    if (status === "no_setup") return providerStatus?.noSetupRequired;
+    if (status === "not_connected") return !providerStatus?.connected && !providerStatus?.noSetupRequired;
+    return providerStatus?.oauthClientRequired;
   });
 }
 
@@ -1383,12 +2100,19 @@ function countProvidersForStatus(
   providers: ProviderDefinition[],
   status: ProviderStatusFilter,
   statusByService: Map<string, ProviderConnectionStatus>,
+  oneKeyServices: Set<string>,
 ): number {
-  return filterProvidersByStatus(providers, status, statusByService).length;
+  return filterProvidersByStatus(providers, status, statusByService, oneKeyServices).length;
 }
 
-export function providerBrowserResetKey(query: string, status: ProviderStatusFilter): string {
-  return `${query}\u0000${status}`;
+export function providerBrowserResetKey(
+  query: string,
+  status: ProviderStatusFilter,
+  category: string,
+  scenario: ProviderDiscoveryScenario | "all" = "all",
+  view: ProviderBrowserView = "discover",
+): string {
+  return `${query}\u0000${status}\u0000${category}\u0000${scenario}\u0000${view}`;
 }
 
 function compactProviderCount(value: number): string {
@@ -1396,12 +2120,14 @@ function compactProviderCount(value: number): string {
 }
 
 export function oauthConfigForProvider(configs: OAuthConfig[], service: string): OAuthConfig | undefined {
-  return configs.find((config) => config.service === service && config.configured);
+  return configs.find((config) => config.service === service);
 }
 
 const providerStatusOptions: Array<{ id: ProviderStatusFilter; labelKey: string }> = [
   { id: "all", labelKey: "providers.filters.all" },
   { id: "connected", labelKey: "providers.filters.connected" },
+  { id: "one_key", labelKey: "providers.filters.oneKey" },
+  { id: "no_setup", labelKey: "providers.filters.noSetup" },
   { id: "not_connected", labelKey: "providers.filters.notConnected" },
   { id: "oauth_needs_config", labelKey: "providers.filters.oauthNeedsConfig" },
 ];
