@@ -5,13 +5,12 @@ import { defineProviderAction } from "../../core/provider-definition.ts";
 
 const service = "supadata";
 
-const nonEmptyStringSchema = (description: string) => s.string({ description, minLength: 1, pattern: "\\S" });
 const urlSchema = s.string({ description: "The URL to process with Supadata.", format: "uri", minLength: 1 });
-const youtubeIdSchema = nonEmptyStringSchema(
+const youtubeIdSchema = s.nonWhitespaceString(
   "The YouTube URL, handle, playlist ID, channel ID, video ID, or supported identifier.",
 );
 const limitSchema = s.number("Maximum number of items to return.", { minimum: 1, maximum: 5000 });
-const languageSchema = nonEmptyStringSchema("Preferred ISO 639-1 language code.");
+const languageSchema = s.nonWhitespaceString("Preferred ISO 639-1 language code.");
 const stringArraySchema = (description: string) =>
   s.array(description, s.string("One string value returned by Supadata."));
 
@@ -49,6 +48,7 @@ const webMapSchema = s.object("The web link map returned by Supadata.", {
 export const supadataActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "get_account",
+    operationType: "read",
     description: "Retrieve Supadata organization, plan, and credit usage details.",
     inputSchema: s.object("The input payload for retrieving Supadata account information.", {}),
     outputSchema: s.object("The Supadata account information response.", {
@@ -60,11 +60,12 @@ export const supadataActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "search_youtube",
+    operationType: "read",
     description: "Search YouTube videos, channels, and playlists through Supadata.",
     inputSchema: s.object(
       "The input payload for searching YouTube.",
       {
-        query: nonEmptyStringSchema("The YouTube search query."),
+        query: s.nonWhitespaceString("The YouTube search query."),
         uploadDate: s.stringEnum("Filter by upload date.", ["all", "hour", "today", "week", "month", "year"]),
         type: s.stringEnum("Filter by result type.", ["all", "video", "channel", "playlist", "movie"]),
         duration: s.stringEnum("Filter by video duration.", ["all", "short", "medium", "long"]),
@@ -86,7 +87,7 @@ export const supadataActions: ActionDefinition[] = [
           { minItems: 1 },
         ),
         limit: limitSchema,
-        nextPageToken: nonEmptyStringSchema("Token for fetching the next search results page."),
+        nextPageToken: s.nonWhitespaceString("Token for fetching the next search results page."),
       },
       { optional: ["uploadDate", "type", "duration", "sortBy", "features", "limit", "nextPageToken"] },
     ),
@@ -94,18 +95,21 @@ export const supadataActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_youtube_video",
+    operationType: "read",
     description: "Get metadata for a YouTube video by URL or ID.",
     inputSchema: s.object("The input payload for getting YouTube video metadata.", { id: youtubeIdSchema }),
     outputSchema: looseYoutubeItemSchema,
   }),
   defineProviderAction(service, {
     name: "get_youtube_channel",
+    operationType: "read",
     description: "Get metadata for a YouTube channel by URL, handle, or ID.",
     inputSchema: s.object("The input payload for getting YouTube channel metadata.", { id: youtubeIdSchema }),
     outputSchema: looseYoutubeItemSchema,
   }),
   defineProviderAction(service, {
     name: "list_youtube_channel_videos",
+    operationType: "read",
     description: "List video IDs from a YouTube channel.",
     inputSchema: s.object(
       "The input payload for listing YouTube channel video IDs.",
@@ -120,12 +124,14 @@ export const supadataActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_youtube_playlist",
+    operationType: "read",
     description: "Get metadata for a YouTube playlist by URL or ID.",
     inputSchema: s.object("The input payload for getting YouTube playlist metadata.", { id: youtubeIdSchema }),
     outputSchema: looseYoutubeItemSchema,
   }),
   defineProviderAction(service, {
     name: "list_youtube_playlist_videos",
+    operationType: "read",
     description: "List video IDs from a YouTube playlist.",
     inputSchema: s.object(
       "The input payload for listing YouTube playlist video IDs.",
@@ -139,6 +145,7 @@ export const supadataActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_youtube_transcript",
+    operationType: "read",
     description: "Get a YouTube transcript by video URL or ID.",
     inputSchema: s.oneOf(
       [
@@ -158,7 +165,7 @@ export const supadataActions: ActionDefinition[] = [
         s.object(
           "Transcript lookup by video ID.",
           {
-            videoId: nonEmptyStringSchema("The YouTube video ID. Alternative to url."),
+            videoId: s.nonWhitespaceString("The YouTube video ID. Alternative to url."),
             text: s.boolean("Whether Supadata should return plain text transcript content."),
             chunkSize: s.number("Maximum characters per transcript chunk when text is false.", {
               minimum: 50,
@@ -175,6 +182,7 @@ export const supadataActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "scrape_web_page",
+    operationType: "read",
     description: "Extract Markdown content from a web page.",
     inputSchema: s.object(
       "The input payload for scraping a web page.",
@@ -189,6 +197,7 @@ export const supadataActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "map_web_links",
+    operationType: "read",
     description: "Extract links found on a website.",
     inputSchema: s.object(
       "The input payload for mapping website links.",

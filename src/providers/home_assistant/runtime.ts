@@ -1,14 +1,23 @@
-import type { HomeAssistantActionName } from "./actions.ts";
+import type { ProviderActionHandlerSubset } from "../provider-executors.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import {
+  compactObject,
+  optionalBoolean,
+  optionalInteger,
+  optionalRecord,
+  optionalString,
+  optionalStringArray,
+  requiredString,
+  requiredStringArray,
+} from "../../core/cast.ts";
+import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed, queryFlag, queryParams } from "../../core/request.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
 } from "../provider-runtime.ts";
-
-const homeAssistantRequestTimeoutMs = 30_000;
 
 export interface HomeAssistantActionContext {
   apiKey: string;
@@ -17,12 +26,12 @@ export interface HomeAssistantActionContext {
   signal?: AbortSignal;
 }
 
-type HomeAssistantActionHandler = (
+export type HomeAssistantActionHandler = (
   input: Record<string, unknown>,
   context: HomeAssistantActionContext,
 ) => Promise<unknown>;
 
-export const homeAssistantActionHandlers: Record<HomeAssistantActionName, HomeAssistantActionHandler> = {
+export const homeAssistantActionHandlers: ProviderActionHandlerSubset<"home_assistant", HomeAssistantActionHandler> = {
   async get_config(_input, context) {
     return {
       config: await requestHomeAssistantJson({
@@ -105,7 +114,116 @@ export const homeAssistantActionHandlers: Record<HomeAssistantActionName, HomeAs
       }),
     };
   },
+  async get_history(input, context) {
+    const startTime = optionalString(input.startTime);
+    return {
+      history: await requestHomeAssistantJson({
+        context,
+        path: startTime ? `/api/history/period/${encodeURIComponent(startTime)}` : "/api/history/period",
+        method: "GET",
+        query: queryParams({
+          filter_entity_id: readHistoryEntityIds(input.entityIds),
+          end_time: optionalString(input.endTime),
+          minimal_response: presenceFlag(input.minimalResponse),
+          no_attributes: presenceFlag(input.noAttributes),
+          skip_initial_state: presenceFlag(input.skipInitialState),
+          significant_changes_only: queryFlag(optionalBoolean(input.significantChangesOnly)),
+        }),
+      }),
+    };
+  },
+  async get_logbook(input, context) {
+    const startTime = optionalString(input.startTime);
+    const entityIds = optionalStringArray(input.entityIds);
+    return {
+      entries: await requestHomeAssistantJson({
+        context,
+        path: startTime ? `/api/logbook/${encodeURIComponent(startTime)}` : "/api/logbook",
+        method: "GET",
+        query: queryParams({
+          entity: entityIds?.length ? entityIds.join(",") : undefined,
+          end_time: optionalString(input.endTime),
+          period: optionalInteger(input.period),
+          context_id: optionalString(input.contextId),
+        }),
+      }),
+    };
+  },
+  async list_calendars(_input, context) {
+    return {
+      calendars: await requestHomeAssistantJson({
+        context,
+        path: "/api/calendars",
+        method: "GET",
+      }),
+    };
+  },
+  async list_calendar_events(input, context) {
+    return {
+      events: await requestHomeAssistantJson({
+        context,
+        path: `/api/calendars/${encodeURIComponent(readInputString(input.entityId, "entityId"))}`,
+        method: "GET",
+        query: queryParams({
+          start: readInputString(input.start, "start"),
+          end: readInputString(input.end, "end"),
+        }),
+      }),
+    };
+  },
+  async get_error_log(_input, context) {
+    try {
+      return {
+        log: await requestHomeAssistantText({
+          context,
+          path: "/api/error_log",
+          method: "GET",
+        }),
+      };
+    } catch (error) {
+      // Home Assistant registers this view only when the instance runs with file
+      // logging, so a 404 means the log is unavailable rather than the path being
+      // wrong. Say that instead of surfacing a bare "Not Found".
+      if (error instanceof ProviderRequestError && error.status === 404) {
+        throw new ProviderRequestError(
+          404,
+          "This Home Assistant instance does not expose an error log. The endpoint exists only when Home Assistant is started with file logging enabled.",
+        );
+      }
+      throw error;
+    }
+  },
 };
+
+/**
+ * Encode a Home Assistant presence flag. These query parameters are read by
+ * presence, not by value, so `false` must omit the parameter entirely rather
+ * than send `0`.
+ */
+function presenceFlag(value: unknown): string | undefined {
+  return optionalBoolean(value) === true ? "1" : undefined;
+}
+
+/**
+ * Build the `filter_entity_id` value, rejecting an entity list that carries no
+ * usable id.
+ *
+ * Home Assistant treats a missing `filter_entity_id` as "every entity", and
+ * `queryParams` drops empty strings, so a list that normalizes to nothing would
+ * turn a scoped query into a whole-instance history dump. The action schema
+ * already requires at least one non-empty id, but the request must not depend on
+ * that alone, and a whitespace-only id passes the schema while still being
+ * unusable.
+ */
+function readHistoryEntityIds(value: unknown): string {
+  const entityIds = requiredStringArray(value, "entityIds", providerInputError)
+    .map((entityId) => entityId.trim())
+    .filter((entityId) => entityId.length > 0);
+  if (entityIds.length === 0) {
+    throw providerInputError("entityIds must contain at least one entity id");
+  }
+  return entityIds.join(",");
+}
 
 export function validateHomeAssistantCredential(input: { values: Record<string, string> }): {
   profile: { accountId: string; displayName: string };
@@ -133,35 +251,30 @@ export function resolveHomeAssistantBaseUrl(input: {
   return normalizeBaseUrl(input.metadata?.baseUrl ?? input.values?.baseUrl);
 }
 
-async function requestHomeAssistantJson(input: {
+/** One Home Assistant REST call, before the base URL and credential are applied. */
+export interface HomeAssistantRequest {
   context: HomeAssistantActionContext;
+  /** Path below the instance base URL, always starting with `/api`. */
   path: string;
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "DELETE";
   body?: Record<string, unknown>;
   query?: Record<string, string>;
-}): Promise<unknown> {
+}
+
+/** Issue a Home Assistant REST call and parse the JSON body. */
+export async function requestHomeAssistantJson(input: HomeAssistantRequest): Promise<unknown> {
   const response = await requestHomeAssistant(input);
   return readJsonResponse(response);
 }
 
-async function requestHomeAssistantText(input: {
-  context: HomeAssistantActionContext;
-  path: string;
-  method: "POST";
-  body?: Record<string, unknown>;
-}): Promise<string> {
+/** Issue a Home Assistant REST call and return the raw text body, for endpoints that are not JSON. */
+export async function requestHomeAssistantText(input: HomeAssistantRequest): Promise<string> {
   const response = await requestHomeAssistant(input);
   return response.text();
 }
 
-async function requestHomeAssistant(input: {
-  context: HomeAssistantActionContext;
-  path: string;
-  method: "GET" | "POST";
-  body?: Record<string, unknown>;
-  query?: Record<string, string>;
-}): Promise<Response> {
-  const timeout = createProviderTimeout(input.context.signal, homeAssistantRequestTimeoutMs);
+async function requestHomeAssistant(input: HomeAssistantRequest): Promise<Response> {
+  const timeout = createProviderTimeout(input.context.signal);
   try {
     const response = await input.context.fetcher(buildHomeAssistantUrl(input), {
       method: input.method,
@@ -199,7 +312,10 @@ function buildHomeAssistantUrl(input: {
   query?: Record<string, string>;
 }): string {
   const url = new URL(input.context.baseUrl);
-  url.pathname = input.path;
+  // Append to the instance path instead of replacing it: normalizeBaseUrl keeps
+  // a base path, so an instance behind a reverse proxy at /ha must reach
+  // /ha/api/... rather than /api/....
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}${input.path}`;
   for (const [key, value] of Object.entries(input.query ?? {})) {
     url.searchParams.set(key, value);
   }
@@ -273,20 +389,16 @@ function normalizeServiceCallResponse(payload: unknown): {
   };
 }
 
-function normalizeBaseUrl(value: unknown): string {
+function normalizeBaseUrl(value: unknown, allowPrivateNetwork: boolean = isPrivateNetworkAccessAllowed()): string {
   const raw = typeof value === "string" ? value.trim() : "";
   if (!raw) {
     throw new ProviderRequestError(400, "baseUrl is required");
   }
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new ProviderRequestError(400, "baseUrl must be a valid http(s) URL");
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new ProviderRequestError(400, "baseUrl must be a valid http(s) URL");
-  }
+  const url = assertPublicHttpUrl(raw, {
+    fieldName: "baseUrl",
+    createError: (message) => new ProviderRequestError(400, message),
+    allowPrivateNetwork,
+  });
   if (url.username || url.password || url.search || url.hash) {
     throw new ProviderRequestError(400, "baseUrl must be a clean instance root URL");
   }
@@ -296,6 +408,7 @@ function normalizeBaseUrl(value: unknown): string {
   return url.pathname === "/" ? url.origin : `${url.origin}${url.pathname}`;
 }
 
-function readInputString(value: unknown, fieldName: string): string {
+/** Read a required string action input, reported as a 400 like the other input guards. */
+export function readInputString(value: unknown, fieldName: string): string {
   return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }

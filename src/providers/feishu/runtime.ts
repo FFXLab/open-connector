@@ -1,9 +1,8 @@
-import type { OAuthProviderContext } from "../provider-runtime.ts";
+import type { ProviderActionHandlerSubset } from "../provider-executors.ts";
+import type { OAuthProviderContext } from "../provider-executors.ts";
 
-import { compactObject, optionalObjectArray, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { ProviderRequestError, readProviderJsonBody } from "../provider-runtime.ts";
-
-const feishuOpenBaseUrl = "https://open.feishu.cn/open-apis";
+import { compactObject, optionalObjectArray, optionalRecord, optionalString } from "../../core/cast.ts";
+import { ProviderRequestError, readProviderJsonBody, requiredInputString } from "../provider-runtime.ts";
 
 // Feishu returns HTTP 200 with a non-zero `code` for most failures, so map the
 // well-known auth codes to their real meaning instead of a generic 502. This
@@ -12,11 +11,18 @@ const feishuOpenBaseUrl = "https://open.feishu.cn/open-apis";
 // codes verified against Feishu's generic error-code reference.
 const feishuCredentialErrorCodes = new Set([20005, 20006, 99991661, 99991668, 99991671, 99991677]);
 const feishuScopeErrorCodes = new Set([99991679]);
+const feishuInvalidInputErrorCodes = new Set([800010701, 900015206]);
 
-type FeishuActionContext = Pick<OAuthProviderContext, "accessToken" | "fetcher" | "signal">;
-type FeishuActionHandler = (input: Record<string, unknown>, context: FeishuActionContext) => Promise<unknown>;
+/** The OAuth call context plus the API base of the deployment the token belongs to. */
+type FeishuActionContext = Pick<OAuthProviderContext, "accessToken" | "fetcher" | "signal"> & {
+  readonly openBaseUrl: string;
+};
+interface FeishuActionHandler {
+  (input: Record<string, unknown>, context: FeishuActionContext): Promise<unknown>;
+}
 
 export interface FetchFeishuUserInfoInput {
+  openBaseUrl: string;
   accessToken: string;
   fetcher: typeof fetch;
   signal?: AbortSignal;
@@ -30,7 +36,7 @@ interface FeishuApiRequestInput {
   context: FeishuActionContext;
 }
 
-export const feishuActionHandlers: Record<string, FeishuActionHandler> = {
+export const feishuActionHandlers: ProviderActionHandlerSubset<"feishu", FeishuActionHandler> = {
   get_current_user(_input, context) {
     return feishuGetCurrentUser(context);
   },
@@ -56,6 +62,7 @@ export const feishuActionHandlers: Record<string, FeishuActionHandler> = {
 
 async function feishuGetCurrentUser(context: FeishuActionContext): Promise<Record<string, unknown>> {
   const data = await fetchFeishuUserInfo({
+    openBaseUrl: context.openBaseUrl,
     accessToken: context.accessToken,
     fetcher: context.fetcher,
     signal: context.signal,
@@ -67,7 +74,7 @@ async function feishuGetDocument(
   input: Record<string, unknown>,
   context: FeishuActionContext,
 ): Promise<Record<string, unknown>> {
-  const documentId = requiredFeishuId(input.documentId, "documentId");
+  const documentId = requiredInputString(input.documentId, "documentId");
   const data = await feishuApiRequest({
     path: `/docx/v1/documents/${encodeURIComponent(documentId)}`,
     context,
@@ -85,7 +92,7 @@ async function feishuGetDocumentContent(
   input: Record<string, unknown>,
   context: FeishuActionContext,
 ): Promise<Record<string, unknown>> {
-  const documentId = requiredFeishuId(input.documentId, "documentId");
+  const documentId = requiredInputString(input.documentId, "documentId");
   const data = await feishuApiRequest({
     path: `/docx/v1/documents/${encodeURIComponent(documentId)}/raw_content`,
     query: compactQuery([["lang", optionalScalarString(input.lang)]]),
@@ -101,7 +108,7 @@ async function feishuListDocumentBlocks(
   input: Record<string, unknown>,
   context: FeishuActionContext,
 ): Promise<Record<string, unknown>> {
-  const documentId = requiredFeishuId(input.documentId, "documentId");
+  const documentId = requiredInputString(input.documentId, "documentId");
   const data = await feishuApiRequest({
     path: `/docx/v1/documents/${encodeURIComponent(documentId)}/blocks`,
     query: compactQuery([
@@ -119,7 +126,7 @@ async function feishuListBitableTables(
   input: Record<string, unknown>,
   context: FeishuActionContext,
 ): Promise<Record<string, unknown>> {
-  const appToken = requiredFeishuId(input.appToken, "appToken");
+  const appToken = requiredInputString(input.appToken, "appToken");
   const data = await feishuApiRequest({
     path: `/bitable/v1/apps/${encodeURIComponent(appToken)}/tables`,
     query: compactQuery([
@@ -135,8 +142,8 @@ async function feishuListBitableFields(
   input: Record<string, unknown>,
   context: FeishuActionContext,
 ): Promise<Record<string, unknown>> {
-  const appToken = requiredFeishuId(input.appToken, "appToken");
-  const tableId = requiredFeishuId(input.tableId, "tableId");
+  const appToken = requiredInputString(input.appToken, "appToken");
+  const tableId = requiredInputString(input.tableId, "tableId");
   const data = await feishuApiRequest({
     path: `/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/fields`,
     query: compactQuery([
@@ -153,8 +160,8 @@ async function feishuSearchBitableRecords(
   input: Record<string, unknown>,
   context: FeishuActionContext,
 ): Promise<Record<string, unknown>> {
-  const appToken = requiredFeishuId(input.appToken, "appToken");
-  const tableId = requiredFeishuId(input.tableId, "tableId");
+  const appToken = requiredInputString(input.appToken, "appToken");
+  const tableId = requiredInputString(input.tableId, "tableId");
   const body = compactObject({
     view_id: optionalString(input.viewId),
     field_names: optionalStringArray(input.fieldNames),
@@ -184,7 +191,12 @@ async function feishuSearchBitableRecords(
 export async function fetchFeishuUserInfo(input: FetchFeishuUserInfoInput): Promise<Record<string, unknown>> {
   return feishuApiRequest({
     path: "/authen/v1/user_info",
-    context: { accessToken: input.accessToken, fetcher: input.fetcher, signal: input.signal },
+    context: {
+      openBaseUrl: input.openBaseUrl,
+      accessToken: input.accessToken,
+      fetcher: input.fetcher,
+      signal: input.signal,
+    },
   });
 }
 
@@ -194,7 +206,7 @@ export async function fetchFeishuUserInfo(input: FetchFeishuUserInfoInput): Prom
  * mapping for every Feishu read in this provider.
  */
 async function feishuApiRequest(input: FeishuApiRequestInput): Promise<Record<string, unknown>> {
-  const url = new URL(`${feishuOpenBaseUrl}${input.path}`);
+  const url = new URL(`${input.context.openBaseUrl}${input.path}`);
   for (const [key, value] of input.query ?? []) {
     url.searchParams.set(key, value);
   }
@@ -229,7 +241,14 @@ async function feishuApiRequest(input: FeishuApiRequestInput): Promise<Record<st
   if (!response.ok || code !== 0) {
     const message = optionalString(envelope.msg) ?? `Feishu request failed (HTTP ${response.status}).`;
     const status = mapFeishuErrorStatus(response.status, code);
-    throw new ProviderRequestError(status, code ? `Feishu ${code}: ${message}` : message);
+    throw new ProviderRequestError(
+      status,
+      code ? `Feishu ${code}: ${message}` : message,
+      undefined,
+      feishuCredentialErrorCodes.has(code) || feishuScopeErrorCodes.has(code)
+        ? "authorization_failed"
+        : "provider_error",
+    );
   }
 
   const data = optionalRecord(envelope.data);
@@ -267,20 +286,19 @@ function normalizeFeishuPage(data: Record<string, unknown>): Record<string, unkn
 }
 
 function mapFeishuErrorStatus(httpStatus: number, code: number): number {
-  if (httpStatus === 401 || feishuCredentialErrorCodes.has(code)) {
+  if (feishuCredentialErrorCodes.has(code)) {
     return 401;
   }
   if (httpStatus === 403 || feishuScopeErrorCodes.has(code)) {
     return 403;
   }
+  if (feishuInvalidInputErrorCodes.has(code)) {
+    return 400;
+  }
   if (httpStatus >= 400 && httpStatus < 500) {
     return httpStatus;
   }
   return 502;
-}
-
-function requiredFeishuId(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function optionalStringArray(value: unknown): string[] | undefined {

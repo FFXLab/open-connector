@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "discourse" as const;
+const service = "discourse";
 
 const nonEmptyStringSchema = (description: string) =>
   s.string(description, {
@@ -194,18 +194,10 @@ const createPostOutputSchema = s.object("A Discourse created post response.", {
   raw: s.looseObject("The raw Discourse created post payload."),
 });
 
-export type DiscourseActionName =
-  | "list_latest_topics"
-  | "list_categories"
-  | "list_category_topics"
-  | "get_topic"
-  | "search"
-  | "create_topic"
-  | "create_post";
-
 export const discourseActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "list_latest_topics",
+    operationType: "read",
     description: "List the latest topics visible to the authenticated Discourse API user.",
     requiredScopes: [],
     followUpActions: ["discourse.get_topic", "discourse.create_post"],
@@ -214,6 +206,7 @@ export const discourseActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_categories",
+    operationType: "read",
     description: "List Discourse categories visible to the authenticated API user.",
     requiredScopes: [],
     followUpActions: ["discourse.list_category_topics", "discourse.create_topic"],
@@ -222,6 +215,7 @@ export const discourseActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_category_topics",
+    operationType: "read",
     description: "List topics for one Discourse category.",
     requiredScopes: [],
     followUpActions: ["discourse.get_topic"],
@@ -230,6 +224,7 @@ export const discourseActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_topic",
+    operationType: "read",
     description: "Read one Discourse topic and its returned posts.",
     requiredScopes: [],
     followUpActions: ["discourse.create_post"],
@@ -238,6 +233,7 @@ export const discourseActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "search",
+    operationType: "read",
     description: "Search Discourse content using the official search query syntax.",
     requiredScopes: [],
     followUpActions: ["discourse.get_topic"],
@@ -246,6 +242,7 @@ export const discourseActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_topic",
+    operationType: "write",
     description: "Create a new Discourse topic with a first post.",
     requiredScopes: [],
     followUpActions: ["discourse.get_topic"],
@@ -254,6 +251,7 @@ export const discourseActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_post",
+    operationType: "write",
     description: "Create a reply post in an existing Discourse topic.",
     requiredScopes: [],
     followUpActions: ["discourse.get_topic"],

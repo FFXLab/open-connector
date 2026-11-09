@@ -2,9 +2,10 @@
 
 <img src="../assets/openconnector-readme-banner.png" alt="OpenConnector - Connect Once. Use Everywhere." width="100%" />
 
-[English](../README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [Français](README.fr.md)
+[English](../README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Русский](README.ru.md) | [Français](README.fr.md) | [Español](README.es.md)
 
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](../LICENSE.txt)
+[![License: Modified Apache-2.0](https://img.shields.io/badge/License-Modified%20Apache--2.0-blue.svg)](../LICENSE.txt)
+[![npm](https://img.shields.io/npm/v/@oomol-lab/open-connector.svg)](https://www.npmjs.com/package/@oomol-lab/open-connector)
 ![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933)
 ![Cloudflare compatible](https://img.shields.io/badge/Cloudflare-compatible-F38020)
 ![MCP](https://img.shields.io/badge/MCP-ready-111827)
@@ -15,15 +16,33 @@
 
 </div>
 
-OpenConnector 是一套供 AI Agent 使用的開放原始碼連接器閘道，也是 Composio 的替代方案。
+OpenConnector 是一套供 AI Agent 使用的開放原始碼連接器閘道，也是 Pipedream/Composio 的替代方案。
 只要連線一次使用者的應用程式帳號，就能向 Agent 與應用程式提供共用目錄，其中包含 1,000 多個服務提供者及 10,000 多個預先建置的 Action。
+
+<table>
+  <tr>
+    <td width="33.33%" align="center"><img src="../assets/deployment-options/oomol.svg" alt="OOMOL" width="140"></td>
+    <td width="33.33%" align="center"><img src="../assets/deployment-options/self-hosted.svg" alt="自行代管" width="140"></td>
+    <td width="33.33%" align="center"><img src="../assets/deployment-options/more-platforms.svg" alt="更多平台" width="140"></td>
+  </tr>
+  <tr>
+    <td width="33.33%" valign="top">代管 OAuth 與執行階段，開箱即用。無須部署或設定 OAuth 應用程式。</td>
+    <td width="33.33%" valign="top">使用 Docker 或 Node.js 在本機或自己的基礎架構中執行。儲存空間與 OAuth 應用程式由你負責管理。</td>
+    <td width="33.33%" valign="top"><strong>Cloudflare</strong>、<strong>Fly.io</strong>、<strong>RepoCloud</strong>、<strong>nibrun</strong>、<strong>NEXUS AI</strong>、<strong>Pethost</strong>、<strong>ZopDay</strong> 等。</td>
+  </tr>
+  <tr>
+    <td width="33.33%" align="center">🚀 <a href="https://oomol.com/docs/connector-saas/"><strong>OOMOL 代管</strong></a></td>
+    <td width="33.33%" align="center"><a href="https://oomol.com/docs/openconnector-self-hosting/"><strong>自行代管</strong></a></td>
+    <td width="33.33%" align="center"><a href="deployment-options/README.zh-TW.md"><strong>更多平台</strong></a></td>
+  </tr>
+</table>
 
 在應用程式程式碼中使用 [Connector SDK](https://github.com/oomol-lab/connector-sdk)，以
 [oo CLI](https://github.com/oomol-lab/oo-cli) 作為本機 Agent 的轉接工具；Agent 主機可使用 MCP，
 自訂用戶端可使用 HTTP/OpenAPI，而 Web 控制台則用於管理與偵錯。
 
 - 將憑證、權限範圍、結構描述、原則及執行記錄保留在可檢視的執行階段中。
-- 可在本機、Fly.io、Cloudflare 相容基礎架構，或 OOMOL 的代管執行階段上運作。
+- 可在本機、自己的基礎架構，或 OOMOL 的代管執行階段上運作。
 - 開放原始碼與商業 SaaS 部署共用相同的服務提供者 ID、Action ID、結構描述及合約。
 
 ## 提供的功能
@@ -32,7 +51,8 @@ OpenConnector 是一套供 AI Agent 使用的開放原始碼連接器閘道，�
 - 支援 API 金鑰、OAuth2、自訂憑證，以及無須驗證的服務提供者。
 - 可檢視的 Action 合約：請求與回應結構描述、必要權限範圍，以及延遲載入的執行器原始碼。
 - 執行階段控制功能，涵蓋連線身分、權限範圍、執行階段權杖、Action 允許/封鎖原則、暫存檔案傳輸及遮蔽敏感資料的執行記錄。
-- 部署選項包括本機 Docker 或 Node.js、使用持久化 SQLite 儲存空間的 Fly.io、搭配 D1/R2/Static Assets 的 Cloudflare Workers，以及 OOMOL 的代管執行階段。
+- 部署選項包括本機 Docker 或 Node.js，以及 OOMOL 的代管執行階段。其他代管平台見
+  [部署方案](deployment-options/README.zh-TW.md)。
 
 ## 適用情境
 
@@ -95,20 +115,14 @@ flowchart LR
 | 方式                        | 適用對象                          | 內容                                                                                                                 |
 | --------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | 開放原始碼、自行代管        | 想完整掌控基礎架構的開發者與團隊  | 本機 Docker 或 Node 執行階段、SQLite 儲存空間、MCP、HTTP、OpenAPI 及 Web 控制台                                      |
-| Fly.io 自行代管             | 想使用代管 Docker 執行階段的團隊  | Node Docker 執行階段、Fly volume 上的 SQLite 儲存空間、TLS、健康檢查、MCP、HTTP、OpenAPI 及 Web 控制台               |
-| Cloudflare 相容部署         | 想要輕量代管執行階段的團隊        | Workers 執行階段、D1 狀態、R2 傳輸檔案及控制台的 Static Assets                                                       |
 | [OOMOL](https://oomol.com/) | 受限於 OAuth 核准或上線期限的團隊 | 使用相同服務提供者與 Action 合約的代管驗證及執行階段基礎架構；介面與開放原始碼版本相容，日後可改用私有或自行代管部署 |
 
-## Cloudflare 快速入門影片
-
-[![將 OpenConnector 部署至 Cloudflare Workers](../assets/cloudflare-quickstart-video.png)](https://www.youtube.com/watch?v=R0V1ZdCuTgc)
-
-[Cloudflare Workers 部署操作示範](https://www.youtube.com/watch?v=R0V1ZdCuTgc)說明如何使用 Workers、D1、R2 及 Web 控制台，
-在 Cloudflare 上啟動 OpenConnector。影片流程與 [cloudflare.md](cloudflare.md) 相同：建立 Cloudflare 資源、將
-`wrangler.example.jsonc` 複製為 `wrangler.local.jsonc`、套用 D1 移轉、設定必要密鑰，最後執行
-`npm run deploy:cloudflare`。
-
 ## 快速開始
+
+> [!NOTE]
+> 以下步驟會啟動自行代管的執行階段。使用 OAuth 服務提供者時，你必須提供自行向對應平台申請的
+> OAuth 用戶端憑證。若希望使用者無須設定 OAuth 應用程式即可直接授權支援的服務提供者，請使用
+> [OOMOL 官方代管 Connector](https://oomol.com/apps)。
 
 使用 Docker Compose 從已發布的映像檔啟動執行階段：
 
@@ -165,38 +179,18 @@ OAuth2 應用程式、具名連線、憑證加密、權杖更新及 Action 原�
 控制台支援瀏覽服務提供者、設定 API 金鑰與 OAuth 用戶端、建立執行階段權杖、檢視 Action 結構描述、
 偵錯 Action、查看近期執行記錄，以及存取產生的 OpenAPI 與 MCP 中繼資料。
 
-## Cloudflare 部署
-
-OpenConnector 可部署至 Cloudflare：Workers 負責執行階段、D1 儲存狀態、R2 處理傳輸檔案，Static Assets 則提供 Web 控制台。
-
-資源建立、移轉、密鑰、本機 Worker 預覽及遠端部署方式，請參閱 [cloudflare.md](cloudflare.md)。
-
-## Fly.io 部署
-
-OpenConnector 也可部署至 Fly.io，使用 Node Docker 執行階段，並將 SQLite 資料持久儲存在 Fly volume 上。
-
-應用程式建立、volume 設定、密鑰、部署、自訂網域及擴充方式，請參閱 [fly-io.md](fly-io.md)。
-
 ## Docker 映像檔（GHCR）
 
 使用 GitHub Packages（GHCR）上的預先建置映像檔執行 OpenConnector：`ghcr.io/oomol-lab/open-connector`。
-最新版本使用 `latest`；正式環境請固定版本號，例如 `v1.0.0`；若要使用最新的 `main` 建置則使用 `tip`。
+最新版本使用 `latest`；正式環境請固定具體的 release 版本號；若要使用最新的 `main` 建置則使用 `tip`。
 
 標籤、拉取及執行方式，請參閱 [docker-ghcr.md（英文）](docker-ghcr.md)。
 
-## 想直接使用？
+## 開箱即用的 AI Bot：Leina
 
-上述方式適合將連接器整合進自有產品、執行階段或基礎架構的團隊。如果只想先體驗 SaaS 連線，
-或直接用於日常工作，不必先部署 OpenConnector，也不必先整合 SDK、CLI、MCP 或 HTTP API。
+如果想使用開箱即用的 AI Bot，可以試試 [Leina](https://leina.ai/)。Leina 可連接 1500 多款 SaaS 應用程式，讓你自由組合應用程式連接、技能和知識庫，打造適合團隊工作流程的 AI Agent。
 
-[Wanta](https://wanta.ai/) 是使用相同 1,000 多項 SaaS/服務提供者涵蓋範圍的桌面產品入口。
-帳號只需連線一次，就能用自然語言在已連線的工具間搜尋、整理、建立及同步內容。
-
-| 如果你想要                    | Wanta 提供                                                                         |
-| ----------------------------- | ---------------------------------------------------------------------------------- |
-| 直接體驗 1,000 多項 SaaS 連線 | 使用相同的 SaaS/服務提供者涵蓋範圍，不必先部署執行階段或整合 SDK/CLI。             |
-| 在日常工作中使用 Agent        | 以自然語言操作電子郵件、聊天、文件、資料、專案、客服、開發者工具及行銷工具。       |
-| 與團隊共用已連線的功能        | 連線與存取範圍只需設定一次；團隊成員無須設定即可使用，而金鑰、權杖及憑證不會外露。 |
+它支援 Slack、Microsoft Teams、Discord、Telegram，以及釘釘、企業微信、飛書和個人微信。你可以直接在聊天中，讓它透過你授權的應用程式查找資訊、彙整週報、整理客戶回饋或準備銷售跟進內容。
 
 ## 文件
 
@@ -204,6 +198,7 @@ OpenConnector 也可部署至 Fly.io，使用 Node Docker 執行階段，並將 
 - [開發者工具](sdk-cli.md)
 - [Gmail OAuth 與 SDK 教學（英文）](gmail-oauth-sdk.md)
 - [執行階段 API 與 MCP](runtime-api.md)
+- [部署方案](deployment-options/README.zh-TW.md)
 - [Fly.io 部署](fly-io.md)
 - [Cloudflare 部署](cloudflare.md)
 - [Docker 映像檔（GHCR）（英文）](docker-ghcr.md)
@@ -240,9 +235,13 @@ npm test
 ## 授權範圍
 
 除非另有說明，本儲存庫中由專案作者撰寫的原始碼、指令碼、產生的專案鷹架、測試及文件，
-均依 Apache License, Version 2.0 授權。請參閱 [LICENSE.txt](../LICENSE.txt)。
+均依 OpenConnector License 授權，它是在 Apache License 2.0 基礎上加了附加條件的修改版。請參閱 [LICENSE.txt](../LICENSE.txt)。
 
-本儲存庫的 Apache-2.0 授權並未授予任何第三方產品、服務提供者、應用程式、API、商標、服務標章、
+你可以出於任何目的使用、修改及自行託管 OpenConnector，包括商業使用及嵌入到你自己的產品中。唯一的附加條件是：
+將 OpenConnector 作為託管的連接器服務提供給第三方，需要取得 OOMOL 的商業授權。
+v1.9.4 及之前的版本仍依未修改的 Apache License 2.0 授權。詳見 [NOTICE.md](../NOTICE.md)。
+
+本儲存庫的授權並未授予任何第三方產品、服務提供者、應用程式、API、商標、服務標章、
 商號、標誌、圖示、品牌資產、文件、螢幕擷取畫面，或其他由其權利人擁有之著作權資料的使用權。
 
 服務提供者及應用程式名稱、中繼資料、連結、權限範圍、權限，以及選用的標誌或圖示，僅用於識別服務及實現互通性。
@@ -254,3 +253,26 @@ npm test
 
 請確保 Issue 與 Pull Request 主題明確、尊重他人且可採取行動。參與本專案須遵守
 [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md)。
+
+## 支持 OpenConnector
+
+如果 OpenConnector 對你有幫助，給個 ⭐ 能幫助更多開發者發現這個專案。
+
+<div align="center">
+
+<img src="../assets/star-open-connector.gif" alt="在 GitHub 上為 OpenConnector 點 Star 的操作示範" width="760" />
+
+</div>
+
+## 貢獻者
+
+感謝每一位參與建設 OpenConnector 的貢獻者。歡迎參閱 [貢獻指南](../CONTRIBUTING.md)，加入我們。
+
+[![OpenConnector 貢獻者](https://contrib.rocks/image?repo=oomol-lab/open-connector)](https://github.com/oomol-lab/open-connector/graphs/contributors)
+
+## Star 歷史
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/star-history/star-history-dark.svg">
+  <img alt="Star 歷史" src="../assets/star-history/star-history-light.svg">
+</picture>

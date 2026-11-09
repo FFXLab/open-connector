@@ -96,7 +96,7 @@ We follow a coordinated disclosure process:
 - Vulnerabilities in third-party providers or their APIs. Report those to the provider.
 - Insecure **self-hosted configuration** that this project documents how to avoid — for example
   running without `OOMOL_CONNECT_ENCRYPTION_KEY`, running without `OOMOL_CONNECT_ADMIN_TOKEN`,
-  binding to `0.0.0.0` on an untrusted network, or exposing the SQLite/D1/R2 data store. See
+  binding to `0.0.0.0` on an untrusted network, or exposing the SQLite/PostgreSQL/D1/R2 data store. See
   [Hardening your deployment](#hardening-your-deployment).
 - The hosted [OOMOL](https://oomol.com/) service and other OOMOL products. These are maintained
   separately from this repository and are not covered by this policy; report issues in them to
@@ -132,22 +132,64 @@ responsibility for securing their deployment. At minimum:
 - **Control network exposure.** The Node server binds `127.0.0.1` by default; the Docker image binds
   `0.0.0.0`. Only expose the gateway on a trusted network or behind an authenticated proxy, and never
   expose it publicly without admin and runtime authentication enabled.
-- **Protect the data store.** The SQLite database (local), D1 (Cloudflare), and R2 transit files
-  contain sensitive material even when encrypted. Restrict file permissions and access, and store
-  Cloudflare secrets with `wrangler secret put`. Idempotent Action responses are eligible for replay
-  for 24 hours, but expired records are removed opportunistically rather than by a physical-deletion
-  deadline.
+- **Protect the data store.** The SQLite or PostgreSQL database (Node), D1 (Cloudflare), and transit
+  files contain sensitive material even when encrypted. Restrict file, database, and bucket access;
+  use TLS verification for remote PostgreSQL; keep database URLs in a secret manager; and store
+  Cloudflare secrets with `wrangler secret put`. PostgreSQL migrations can use a separate DDL role,
+  while the application role only needs runtime-table CRUD and `runtime_migrations` read access.
+  Idempotent Action responses are eligible for replay for 24 hours, but expired records are removed
+  opportunistically rather than by a physical-deletion deadline.
 - **Reduce attack surface.** Use `OOMOL_CONNECT_ALLOWED_ACTIONS` / `OOMOL_CONNECT_BLOCKED_ACTIONS` to
   limit which Actions can run. Restrict provider proxies separately with
   `OOMOL_CONNECT_ALLOWED_PROXIES` / `OOMOL_CONNECT_BLOCKED_PROXIES`: `/v1/proxy/:service` can reach
   provider API endpoints beyond the curated Action catalog, every proxy is allowed until one of those
-  variables restricts it, and the Action variables do not restrict it. Pin it to the services you
-  actually proxy, or set `OOMOL_CONNECT_BLOCKED_PROXIES="*"` to disable provider proxies entirely.
-- **Stay current.** Run a supported Node.js (22.18+ / 24) and update to the latest OpenConnector
+  variables restricts it, and the Action variables do not restrict it. Persistent runtime tokens
+  must independently grant provider proxy access through `allowedProxies`; an empty grant denies
+  every proxy. Pin both the runtime policy and each token to the services they actually proxy, or set
+  `OOMOL_CONNECT_BLOCKED_PROXIES="*"` to disable provider proxies entirely. Persistent tokens may
+  also set `allowedConnections` to an exact allowlist of the stable, opaque IDs returned by the
+  connection APIs; omit it or send `[]` for unrestricted connection access. Restricted tokens must
+  include the selected connection's ID, including the default connection used by unnamed requests. Denied connections
+  return `403 connection_not_allowed` before lookup so connection existence is not leaked. Virtual
+  `no_auth` connections do not require a grant.
+- **Stay current.** Run a patched runtime meeting the [baseline below](#runtime-security-baseline) and update to the latest OpenConnector
   release for security fixes.
 
 See [docs/credentials.md](docs/credentials.md), [docs/configuration.md](docs/configuration.md), and
 [docs/cloudflare.md](docs/cloudflare.md) for full guidance.
+
+## Runtime Security Baseline
+
+CVE-2026-111497 affects the native Brotli decoder bundled with Node.js and Bun. Use Node.js
+**22.23.4+**, **24.22.1+**, or **26.12.1+** within those release lines, or **Bun 1.4.4+**.
+Use a supported release line and keep installing subsequent security updates.
+See the [Node.js advisory](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)
+and [Bun advisory](https://github.com/oven-sh/bun/security/advisories/GHSA-663w-cv8g-jj2p).
+
+- **Docker:** both build and runtime stages pin Node 24.22.1. Rebuild and redeploy images;
+  existing containers and previously published images do not update automatically. Check the
+  running container with `docker exec open-connector node --version`.
+- **Source and npm deployments:** upgrade the runtime and restart the application. The npm
+  package declares the patched versions in `engines`; package managers may only warn about
+  mismatches, so operators must verify the actual runtime with `node --version` or `bun --version`.
+- **Single binaries:** rebuild with the Bun version in `.bun-version` and replace deployed
+  executables. They embed Bun, so upgrading the host runtime does not repair an older binary.
+- **Cloudflare Workers:** the deployed decoder belongs to Cloudflare's managed runtime, not the
+  Node.js used to build the application. Verify its patch status with Cloudflare separately;
+  `compressApiResponses: false` does not prove that upstream response decoding is safe.
+  Local Wrangler development also uses a separate workerd runtime whose patch status must be checked.
+
+Provider actions, downloads, and proxy requests use guarded fetch, whose underlying runtime
+can automatically decode upstream `Content-Encoding: br` responses. The SSRF guard restricts
+network destinations; it does not prevent a public upstream from sending malicious compressed
+bytes. Encoding negotiation remains unchanged: requesting only gzip/deflate cannot stop a
+malicious upstream from returning Brotli, and checking response headers after `fetch` is not a
+reliable barrier before native decoding. A patched runtime is required.
+
+The application's inbound request path does not install a Brotli decompressor. Hono's
+`compress()` middleware encodes outbound API responses using gzip/deflate; it does not decode
+request bodies. No blanket rejection of incoming `Content-Encoding: br` is added. Operators
+must independently update any reverse proxy or middleware that decompresses inbound bodies.
 
 ## Handling Credentials in the Codebase
 

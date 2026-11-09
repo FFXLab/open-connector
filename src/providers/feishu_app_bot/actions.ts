@@ -1,10 +1,53 @@
 import type { ActionDefinition } from "../../core/types.ts";
 
-import { s } from "../../core/json-schema.ts";
+import { readSchemaProperties, readSchemaRequired, s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
+import { createFeishuApplicationActions } from "../feishu/shared/application-actions.ts";
+import { createFeishuBaseActions } from "../feishu/shared/base-actions.ts";
+import { createFeishuBaseAdvancedActions } from "../feishu/shared/base-advanced-actions.ts";
+import { createFeishuCalendarActions } from "../feishu/shared/calendar-actions.ts";
+import { createFeishuContactActions } from "../feishu/shared/contact-actions.ts";
+import { createFeishuDocsActions } from "../feishu/shared/docs-actions.ts";
+import { createFeishuDomainMediaActions } from "../feishu/shared/domain-media-actions.ts";
+import { createFeishuDriveActions } from "../feishu/shared/drive-actions.ts";
+import { createFeishuDriveAdvancedActions } from "../feishu/shared/drive-advanced-actions.ts";
+import { createFeishuFileActions } from "../feishu/shared/file-actions.ts";
+import { createFeishuImActions } from "../feishu/shared/im-actions.ts";
+import { createFeishuMailActions } from "../feishu/shared/mail-actions.ts";
+import { createFeishuMailAdvancedActions } from "../feishu/shared/mail-advanced-actions.ts";
+import { createFeishuMarkdownActions } from "../feishu/shared/markdown-actions.ts";
+import { createFeishuOkrActions } from "../feishu/shared/okr-actions.ts";
+import { createFeishuSheetsActions } from "../feishu/shared/sheets-actions.ts";
+import { createFeishuSheetsAdvancedActions } from "../feishu/shared/sheets-advanced-actions.ts";
+import { createFeishuSlidesActions } from "../feishu/shared/slides-actions.ts";
+import { createFeishuTaskActions } from "../feishu/shared/task-actions.ts";
+import { createFeishuVcActions } from "../feishu/shared/vc-actions.ts";
+import { createFeishuWhiteboardActions } from "../feishu/shared/whiteboard-actions.ts";
+import { createFeishuWikiActions } from "../feishu/shared/wiki-actions.ts";
 import { feishuAppBotScopes } from "./scopes.ts";
 
 const service = "feishu_app_bot";
+const feishuAppBotMailActionNames = new Set([
+  "list_mail_messages",
+  "get_mail_message",
+  "get_mail_thread",
+  "create_mail_template",
+  "update_mail_template",
+  "triage_mail_messages",
+  "recall_sent_mail",
+  "get_mail_recall_detail",
+]);
+const tenantUnsupportedSharedActions = new Set([
+  "list_tasks",
+  "search_tasks",
+  "search_tasklists",
+  "get_related_tasks",
+  "create_wiki_space",
+  "search_documents",
+  "upload_minutes_media",
+  "search_calendar_events",
+  "get_calendar_meeting_info",
+]);
 
 const sendMessageTypeSchema = s.stringEnum("The Feishu message type to send.", [
   "text",
@@ -296,15 +339,44 @@ const fileUploadEnvelopeSchema = s.requiredObject("A Feishu file-upload response
     file_key: s.string("The Feishu file key returned by the upload API."),
   }),
 });
-const downloadableFileSchema = s.requiredObject("A downloadable file uploaded to connector transit storage.", {
+const downloadableFileSchema = s.requiredObject("A downloadable file uploaded to local transit storage.", {
+  fileId: s.string("The local transit file identifier."),
+  downloadUrl: s.url("The local URL for downloading the transit file."),
+  sizeBytes: s.nonNegativeInteger("The downloaded file size in bytes."),
   name: s.string("The downloaded file name."),
-  mimetype: s.string("The MIME type of the downloaded file."),
-  downloadUrl: s.string("The local transit URL for downloading the file."),
+  mimeType: s.string("The MIME type of the downloaded file."),
 });
 
 export const feishuAppBotActions: ActionDefinition[] = [
   defineProviderAction(service, {
+    name: "get_app_info",
+    operationType: "read",
+    description: "Get the Feishu custom app profile and configured scopes for this connection.",
+    requiredScopes: [],
+    providerPermissions: [],
+    inputSchema: s.object("No input is required.", {}),
+    outputSchema: s.requiredObject("The connected Feishu app profile.", {
+      app: s.looseObject("The application object returned by Feishu."),
+    }),
+  }),
+  defineProviderAction(service, {
+    name: "get_app_permissions",
+    operationType: "read",
+    description: "Get the currently published Feishu app version, tenant scopes, and subscribed events.",
+    requiredScopes: [],
+    providerPermissions: [],
+    inputSchema: s.object("No input is required.", {}),
+    outputSchema: s.requiredObject("The published Feishu app permission snapshot.", {
+      versionId: s.nullableString("The published version identifier."),
+      version: s.nullableString("The published version label."),
+      scopes: s.stringArray("The published tenant_access_token scopes."),
+      events: s.stringArray("The event types subscribed by the published app version."),
+      raw: s.looseObject("The raw published app version item."),
+    }),
+  }),
+  defineProviderAction(service, {
     name: "upload_image",
+    operationType: "write",
     description: "Upload one public image URL to Feishu/Lark and return the image key for message sending.",
     requiredScopes: [feishuAppBotScopes.resource],
     providerPermissions: [feishuAppBotScopes.resource],
@@ -315,6 +387,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "download_image",
+    operationType: "read",
     description: "Download one Feishu/Lark image by image key and upload it to transit storage.",
     inputSchema: s.object(
       "Input for downloading one Feishu image.",
@@ -332,6 +405,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "upload_file",
+    operationType: "write",
     description: "Upload one public file URL to Feishu/Lark and return the file key for message sending.",
     requiredScopes: [feishuAppBotScopes.resource],
     providerPermissions: [feishuAppBotScopes.resource],
@@ -351,6 +425,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "download_file",
+    operationType: "read",
     description: "Download one Feishu/Lark file by file key and upload it to transit storage.",
     inputSchema: s.object(
       "Input for downloading one Feishu file.",
@@ -368,6 +443,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "send_message",
+    operationType: "write",
     description: "Send a Feishu/Lark app bot message to a user or chat.",
     requiredScopes: [feishuAppBotScopes.sendMessage],
     providerPermissions: [feishuAppBotScopes.sendMessage],
@@ -386,6 +462,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "reply_message",
+    operationType: "write",
     description: "Reply to an existing Feishu/Lark message as the app bot.",
     requiredScopes: [feishuAppBotScopes.sendMessage],
     providerPermissions: [feishuAppBotScopes.sendMessage],
@@ -404,6 +481,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_message",
+    operationType: "read",
     description: "Fetch one Feishu/Lark message by message_id.",
     requiredScopes: [feishuAppBotScopes.readMessage, feishuAppBotScopes.groupMessage],
     providerPermissions: [feishuAppBotScopes.readMessage, feishuAppBotScopes.groupMessage],
@@ -420,6 +498,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_messages",
+    operationType: "read",
     description: "List Feishu/Lark history messages from a chat or thread.",
     requiredScopes: [feishuAppBotScopes.readMessage, feishuAppBotScopes.groupMessage],
     providerPermissions: [feishuAppBotScopes.readMessage, feishuAppBotScopes.groupMessage],
@@ -444,6 +523,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_chats",
+    operationType: "read",
     description: "List chats that the Feishu/Lark app bot currently belongs to.",
     requiredScopes: [feishuAppBotScopes.chatRead],
     providerPermissions: [feishuAppBotScopes.chatRead],
@@ -461,6 +541,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "search_chats",
+    operationType: "read",
     description: "Search chats visible to the Feishu/Lark app bot by keyword.",
     requiredScopes: [feishuAppBotScopes.chatRead],
     providerPermissions: [feishuAppBotScopes.chatRead],
@@ -478,6 +559,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_chat",
+    operationType: "read",
     description: "Fetch one Feishu/Lark chat by chat_id.",
     requiredScopes: [feishuAppBotScopes.chatRead],
     providerPermissions: [feishuAppBotScopes.chatRead],
@@ -493,6 +575,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_chat_members",
+    operationType: "read",
     description: "List visible members in one Feishu/Lark chat.",
     requiredScopes: [feishuAppBotScopes.chatMembersRead],
     providerPermissions: [feishuAppBotScopes.chatMembersRead],
@@ -510,6 +593,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "recall_message",
+    operationType: "write",
     description: "Recall one Feishu/Lark message that the app bot sent.",
     requiredScopes: [feishuAppBotScopes.recallMessage],
     providerPermissions: [feishuAppBotScopes.recallMessage],
@@ -520,6 +604,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "edit_message",
+    operationType: "write",
     description: "Edit a Feishu/Lark text or post message sent by the app bot.",
     requiredScopes: [feishuAppBotScopes.updateMessage],
     providerPermissions: [feishuAppBotScopes.updateMessage],
@@ -532,6 +617,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "add_message_reaction",
+    operationType: "write",
     description: "Add one emoji reaction to a Feishu/Lark message.",
     requiredScopes: [feishuAppBotScopes.reactionWrite],
     providerPermissions: [feishuAppBotScopes.reactionWrite],
@@ -543,6 +629,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_message_reactions",
+    operationType: "read",
     description: "List emoji reactions on one Feishu/Lark message.",
     requiredScopes: [feishuAppBotScopes.reactionRead],
     providerPermissions: [feishuAppBotScopes.reactionRead],
@@ -561,6 +648,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "remove_message_reaction",
+    operationType: "destructive",
     description: "Remove one Feishu/Lark message reaction by reaction_id.",
     requiredScopes: [feishuAppBotScopes.reactionWrite],
     providerPermissions: [feishuAppBotScopes.reactionWrite],
@@ -572,6 +660,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "pin_message",
+    operationType: "write",
     description: "Pin one Feishu/Lark message inside its chat.",
     requiredScopes: [feishuAppBotScopes.pinWrite],
     providerPermissions: [feishuAppBotScopes.pinWrite],
@@ -582,6 +671,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "list_pins",
+    operationType: "read",
     description: "List pin records in one Feishu/Lark chat and time window.",
     requiredScopes: [feishuAppBotScopes.pinRead],
     providerPermissions: [feishuAppBotScopes.pinRead],
@@ -600,6 +690,7 @@ export const feishuAppBotActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "remove_pin",
+    operationType: "destructive",
     description: "Remove the pin state from one Feishu/Lark message.",
     requiredScopes: [feishuAppBotScopes.pinWrite],
     providerPermissions: [feishuAppBotScopes.pinWrite],
@@ -608,26 +699,73 @@ export const feishuAppBotActions: ActionDefinition[] = [
     }),
     outputSchema: emptyEnvelopeSchema,
   }),
+  ...createFeishuContactActions({
+    service,
+    identity: "tenant",
+  }),
+  ...createFeishuImActions({
+    service,
+    identity: "tenant",
+  }),
+  ...createFeishuBaseActions(service),
+  ...createFeishuBaseAdvancedActions(service),
+  ...tenantSupportedActions(createFeishuCalendarActions(service)),
+  ...tenantSupportedActions(createFeishuTaskActions(service)),
+  ...tenantSupportedActions(createFeishuWikiActions(service)),
+  ...tenantSupportedActions(createFeishuDocsActions(service)),
+  ...createFeishuDriveActions(service),
+  ...createFeishuDriveAdvancedActions({
+    service,
+    identity: "bot",
+  }),
+  ...createFeishuSlidesActions(service),
+  ...createFeishuWhiteboardActions(service),
+  ...createFeishuSheetsActions(service),
+  ...createFeishuSheetsAdvancedActions(service),
+  ...tenantMailActions([...createFeishuMailActions(service), ...createFeishuMailAdvancedActions(service)]),
+  ...createFeishuOkrActions(service, "tenant"),
+  ...createFeishuFileActions(service),
+  ...createFeishuVcActions({
+    service,
+    identity: "tenant",
+  }),
+  ...createFeishuApplicationActions(service),
+  ...createFeishuMarkdownActions(service),
+  ...tenantSupportedActions(createFeishuDomainMediaActions(service)),
 ];
 
-export type FeishuAppBotActionName =
-  | "upload_image"
-  | "download_image"
-  | "upload_file"
-  | "download_file"
-  | "send_message"
-  | "reply_message"
-  | "get_message"
-  | "list_messages"
-  | "list_chats"
-  | "search_chats"
-  | "get_chat"
-  | "list_chat_members"
-  | "recall_message"
-  | "edit_message"
-  | "add_message_reaction"
-  | "list_message_reactions"
-  | "remove_message_reaction"
-  | "pin_message"
-  | "list_pins"
-  | "remove_pin";
+export const feishuAppBotProviderScopes: string[] = Array.from(
+  new Set(feishuAppBotActions.flatMap((action) => action.providerPermissions)),
+);
+
+function tenantSupportedActions(actions: readonly ActionDefinition[]): readonly ActionDefinition[] {
+  return actions.filter((action) => !tenantUnsupportedSharedActions.has(action.name));
+}
+
+function tenantMailActions(actions: readonly ActionDefinition[]): readonly ActionDefinition[] {
+  return actions.filter((action) => feishuAppBotMailActionNames.has(action.name)).map(requireExplicitMailbox);
+}
+
+function requireExplicitMailbox(action: ActionDefinition): ActionDefinition {
+  const properties = readSchemaProperties(action.inputSchema);
+  const mailboxSchema = properties.mailboxId;
+  const required = readSchemaRequired(action.inputSchema);
+  if (!mailboxSchema || typeof mailboxSchema !== "object" || Array.isArray(mailboxSchema)) {
+    return action;
+  }
+  return {
+    ...action,
+    inputSchema: {
+      ...action.inputSchema,
+      properties: {
+        ...properties,
+        mailboxId: {
+          ...mailboxSchema,
+          description: "The explicit user mailbox email address. App identity does not support `me`.",
+          not: { const: "me" },
+        },
+      },
+      required: required.includes("mailboxId") ? required : [...required, "mailboxId"],
+    },
+  };
+}

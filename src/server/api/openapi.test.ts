@@ -28,6 +28,7 @@ const provider: ProviderDefinition = {
       service: "example",
       name: "echo",
       description: "Echo the input.",
+      operationType: "write",
       requiredScopes: [],
       providerPermissions: [],
       inputSchema: { type: "object", additionalProperties: true },
@@ -39,11 +40,11 @@ const provider: ProviderDefinition = {
 describe("action execution OpenAPI", () => {
   it.each([
     ["generic", {}],
-    ["concrete", { actionId: "example.echo" }],
+    ["concrete", { action: provider.actions[0] }],
   ] satisfies Array<[string, OpenApiDocumentOptions]>)(
     "documents idempotent retries for the %s operation",
     (_name, options) => {
-      const document = createOpenApiDocument([provider], options);
+      const document = createOpenApiDocument(options);
       const path = document.paths["/v1/actions/{actionId}"] as { post: RunOperation };
 
       expect(path.post.parameters).toContainEqual({
@@ -60,6 +61,14 @@ describe("action execution OpenAPI", () => {
         description:
           "Optional runtime-wide key for deduplicating retries of the same action request. Leading and trailing whitespace is trimmed; the remaining value must be non-empty and must not exceed 255 UTF-8 bytes. Reuse a key only for retries with the same action, input, effective connection, and stored runtime token. When this header is present, the action input must not exceed an object/array nesting depth of 100 levels.",
       });
+      expect(path.post.parameters).toContainEqual({
+        name: "connectionName",
+        in: "query",
+        required: false,
+        schema: { type: "string" },
+        description:
+          "Named connection. Same fact as MCP connectionName; HTTP alias, connectionName, and x-oo-connector-alias are equivalent. Defaults to default.",
+      });
       expect(path.post.responses["409"]?.description).toBe(
         "For idempotency, idempotency_request_in_progress means the original request is still running or its outcome is uncertain, while idempotency_key_conflict means the key was reused for a different action, input, effective connection, or stored runtime token. Other runtime conflicts may return their own error code with the same status.",
       );
@@ -73,8 +82,158 @@ describe("action execution OpenAPI", () => {
     },
   );
 
+  it("documents the same runtime statuses on both /v1 execution routes", () => {
+    const document = createOpenApiDocument();
+    const documentedStatuses = (path: string): string[] =>
+      Object.keys((document.paths[path] as { post: { responses: Record<string, unknown> } }).post.responses);
+
+    // The action route now honors an upstream 413 the way the proxy route did,
+    // and the proxy route now answers 402 the way the action route did. The two
+    // routes derive their status from the same error object, so a status one
+    // route documents and the other hides is a contract the client cannot read.
+    expect(documentedStatuses("/v1/actions/{actionId}")).toContain("413");
+    expect(documentedStatuses("/v1/actions/{actionId}")).toContain("402");
+    expect(documentedStatuses("/v1/proxy/{service}")).toContain("402");
+    expect(documentedStatuses("/v1/proxy/{service}")).toContain("413");
+  });
+
+  it("documents the provider setup route as an administrator route", () => {
+    const document = createOpenApiDocument();
+    const setup = document.paths["/v1/providers/{service}/setup"] as {
+      get: { tags: string[]; description: string; responses: Record<string, unknown> };
+    };
+
+    expect(setup.get.tags).toEqual(["Connections"]);
+    expect(setup.get.description).toContain("administrator");
+    expect(Object.keys(setup.get.responses).sort()).toEqual(["200", "401", "403", "404"]);
+  });
+
+  it("documents the console OAuth connection-request route", () => {
+    const document = createOpenApiDocument();
+    const route = document.paths["/api/oauth/connection-requests"] as {
+      post: {
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: { required?: string[]; properties?: Record<string, unknown> };
+            };
+          };
+        };
+        responses: Record<string, unknown>;
+      };
+    };
+
+    expect(route.post.requestBody.content["application/json"].schema.required).toEqual(["service", "connectionName"]);
+    expect(route.post.requestBody.content["application/json"].schema.properties).toHaveProperty("appId");
+    expect(route.post.requestBody.content["application/json"].schema.properties).toHaveProperty("returnUri");
+    expect(route.post.requestBody.content["application/json"].schema.properties).toMatchObject({
+      authorizationOptionIds: { type: "array", items: { type: "string" } },
+    });
+    expect(Object.keys(route.post.responses).sort()).toEqual([
+      "200",
+      "400",
+      "401",
+      "403",
+      "404",
+      "409",
+      "429",
+      "502",
+      "503",
+      "504",
+    ]);
+    const started = route.post.responses["200"] as {
+      content: {
+        "application/json": { schema: { properties?: Record<string, unknown>; required?: string[] } };
+      };
+    };
+    expect(started.content["application/json"].schema.required).toEqual([
+      "authorizationUrl",
+      "stateHandle",
+      "connectionRequestId",
+      "status",
+      "expiresAt",
+    ]);
+    expect(started.content["application/json"].schema.properties).toMatchObject({
+      authorizationUrl: { type: "string" },
+      stateHandle: { type: "string" },
+      connectionRequestId: { type: "string" },
+      status: { const: "initiated" },
+      expiresAt: { type: "string" },
+    });
+    const errorResponse = document.components.schemas.ErrorResponse as {
+      properties: { error: { properties?: Record<string, unknown> } };
+    };
+    expect(errorResponse.properties.error.properties).toHaveProperty("reason");
+  });
+
+  it("documents public /v1 catalog routes with the runtime envelope", () => {
+    const document = createOpenApiDocument();
+    const search = document.paths["/v1/actions/search"] as {
+      get: {
+        responses: Record<string, { content?: { "application/json"?: { schema?: { required?: string[] } } } }>;
+      };
+    };
+    const actionPath = document.paths["/v1/actions/{actionId}"] as { get?: unknown; post?: unknown };
+    const authenticatedApps = document.paths["/v1/apps/authenticated"] as {
+      get: { summary: string; parameters: Array<{ name: string; description: string }> };
+    };
+    const connectedApp = document.components.schemas.RuntimeConnectedApp as {
+      required: string[];
+      properties: { alias?: { description?: string }; marketplace?: { required?: string[] } };
+    };
+    const health = document.paths["/v1/health"] as {
+      get: {
+        responses: Record<
+          string,
+          {
+            content?: {
+              "application/json"?: {
+                schema?: {
+                  type?: string;
+                  required?: string[];
+                  properties?: { data?: { type?: string; required?: string[] } };
+                };
+              };
+            };
+          }
+        >;
+      };
+    };
+    const healthSchema = health.get.responses["200"]?.content?.["application/json"]?.schema;
+    const healthDataSchema = healthSchema?.properties?.data;
+
+    expect(document.paths["/v1/health"]).toBeDefined();
+    expect(document.paths["/v1/providers"]).toBeDefined();
+    expect(document.paths["/v1/actions"]).toBeDefined();
+    expect(document.paths["/v1/apps"]).toBeDefined();
+    expect(actionPath.get).toBeDefined();
+    expect(actionPath.post).toBeDefined();
+    expect(healthSchema?.type).toBe("object");
+    expect(healthSchema?.required).toEqual(expect.arrayContaining(["success", "message", "data", "meta"]));
+    expect(healthDataSchema?.type).toBe("object");
+    expect(healthDataSchema?.required).toEqual(expect.arrayContaining(["ok", "runtime"]));
+    expect(search.get.responses["400"]?.content?.["application/json"]?.schema?.required).toEqual(
+      expect.arrayContaining(["success", "errorCode"]),
+    );
+    expect(search.get.responses["404"]).toBeUndefined();
+    expect(connectedApp.required).toEqual(expect.arrayContaining(["alias", "isDefault"]));
+    expect(connectedApp.required).not.toContain("marketplace");
+    expect(connectedApp.properties.marketplace?.required).toEqual(["id", "pricing"]);
+    expect(connectedApp.properties.alias?.description).toContain("connectionName");
+    expect(connectedApp.properties.alias?.description).toContain("x-oo-connector-alias");
+    expect(authenticatedApps.get.summary).toBe(
+      "Return authenticated provider service IDs from the supplied candidates.",
+    );
+    expect(authenticatedApps.get.parameters).toContainEqual(
+      expect.objectContaining({
+        name: "service",
+        description: "Candidate service id to check. Repeat to check multiple services.",
+      }),
+    );
+  });
+
   it("documents Runtime and token policy management and run audit metadata", () => {
-    const document = createOpenApiDocument([provider]);
+    const document = createOpenApiDocument();
     const runtimePolicyPath = document.paths["/api/runtime-policy"] as {
       get: { responses: Record<string, unknown> };
       put: { responses: Record<string, unknown> };
@@ -89,7 +248,14 @@ describe("action execution OpenAPI", () => {
     const runLog = document.components.schemas.RunLog as { properties: Record<string, unknown> };
     const tokenSummary = document.components.schemas.RuntimeTokenSummary as {
       required: string[];
+      properties: Record<string, { description?: string }>;
+    };
+    const tokenPolicy = document.components.schemas.TokenPolicy as {
+      required: string[];
       properties: Record<string, unknown>;
+    };
+    const policyDecision = document.components.schemas.PolicyDecision as {
+      properties: { code: { enum: string[] } };
     };
 
     expect(runtimePolicyPath.get.responses["200"]).toBeDefined();
@@ -100,9 +266,169 @@ describe("action execution OpenAPI", () => {
       maxItems: 128,
       items: { maxLength: 256, description: expect.stringContaining("256-byte UTF-8 limit") },
     });
-    expect(tokenSummary.required).toEqual(expect.arrayContaining(["allowedActions", "blockedActions"]));
-    expect(tokenSummary.properties).toHaveProperty("actionInputConstraints");
+    expect(tokenSummary.required).toEqual(
+      expect.arrayContaining(["allowedActions", "blockedActions", "allowedProxies", "allowedConnections"]),
+    );
+    expect(tokenPolicy.required).toEqual(["allowedActions", "blockedActions", "allowedProxies", "allowedConnections"]);
+    expect(policyDecision.properties.code.enum).toEqual([
+      "action_not_allowed",
+      "action_blocked",
+      "proxy_not_allowed",
+      "proxy_blocked",
+      "connection_not_allowed",
+    ]);
     expect(runLog.properties).toHaveProperty("policy");
     expect(runLog.properties).toHaveProperty("runtimeTokenId");
+  });
+
+  it("documents stored-token connection IDs without changing deployment PolicyRules", () => {
+    const document = createOpenApiDocument();
+    const tokenSummary = document.components.schemas.RuntimeTokenSummary as {
+      required: string[];
+      properties: Record<string, { anyOf?: ConnectionGrantSchema[]; description?: string }>;
+    };
+    const createRequest = document.components.schemas.RuntimeTokenCreateRequest as {
+      required: string[];
+      properties: Record<string, { anyOf?: ConnectionGrantSchema[]; description?: string }>;
+    };
+    const tokenPolicy = document.components.schemas.TokenPolicy as {
+      required: string[];
+      properties: Record<string, { anyOf?: ConnectionGrantSchema[]; description?: string }>;
+    };
+    const policyRules = document.components.schemas.PolicyRules as {
+      properties: Record<string, unknown>;
+    };
+    const expectedGrant = {
+      type: "array",
+      maxItems: 128,
+      items: {
+        type: "string",
+        minLength: 1,
+        maxLength: 256,
+      },
+    };
+
+    expect(policyRules.properties).not.toHaveProperty("allowedConnections");
+    expect(tokenSummary.required).toContain("allowedConnections");
+    expect(createRequest.required).not.toContain("allowedConnections");
+    expect(tokenPolicy.required).toContain("allowedConnections");
+    for (const schema of [
+      tokenSummary.properties.allowedConnections,
+      createRequest.properties.allowedConnections,
+      tokenPolicy.properties.allowedConnections,
+    ]) {
+      expect(schema.anyOf?.some((item) => item.type === "array" && item.maxItems === expectedGrant.maxItems)).toBe(true);
+      expect(schema.description).toMatch(/connection grants/i);
+    }
+  });
+});
+
+interface ConnectionGrantSchema {
+  type?: string;
+  maxItems?: number;
+  description?: string;
+  items?: { type: string; minLength: number; maxLength: number; pattern: string };
+}
+
+describe("Slack verification contract", () => {
+  it("documents dedicated bearer authentication and runtime response envelopes", () => {
+    const document = createOpenApiDocument();
+    const route = document.paths["/v1/providers/slackbot/events/verify"] as {
+      post: {
+        security: unknown;
+        responses: Record<
+          string,
+          { content: { "application/json": { schema: { properties: Record<string, unknown> } } } }
+        >;
+      };
+    };
+    expect(route.post.security).toEqual([{ eventVerificationToken: [] }]);
+    expect(document.components.securitySchemes.eventVerificationToken).toMatchObject({
+      type: "http",
+      scheme: "bearer",
+    });
+    for (const status of [200, 400, 401, 403, 404, 409, 413, 500]) {
+      const properties = route.post.responses[status]!.content["application/json"].schema.properties;
+      expect(properties).toHaveProperty("success");
+      expect(properties).toHaveProperty("data");
+      if (status !== 200) expect(properties).toHaveProperty("errorCode");
+    }
+  });
+});
+
+describe("Teams verification contract", () => {
+  it("documents trusted activity identifiers", () => {
+    const document = createOpenApiDocument();
+    const route = document.paths["/v1/providers/microsoft_teams_bot/events/verify"] as {
+      post: {
+        description: string;
+        responses: Record<
+          string,
+          {
+            content: {
+              "application/json": {
+                schema: {
+                  properties: Record<
+                    string,
+                    { required?: string[]; properties?: Record<string, { anyOf?: Array<Record<string, unknown>> }> }
+                  >;
+                };
+              };
+            };
+          }
+        >;
+      };
+    };
+    const data = route.post.responses["200"]!.content["application/json"].schema.properties.data!;
+    expect(route.post.description).toMatch(/Bot Connector/i);
+    expect(data.required).toEqual([
+      "valid",
+      "appId",
+      "tenantId",
+      "serviceUrl",
+      "activityId",
+      "conversationId",
+      "aadObjectId",
+      "channelId",
+    ]);
+    for (const field of ["tenantId", "activityId", "conversationId", "aadObjectId"]) {
+      expect(data.properties![field]).toMatchObject({
+        anyOf: [{ type: "string" }, { type: "null" }],
+      });
+    }
+  });
+});
+
+describe("Feishu verification contract", () => {
+  it("documents dedicated authentication and the trusted decrypted payload", () => {
+    const document = createOpenApiDocument();
+    const route = document.paths["/v1/providers/feishu_app_bot/events/verify"] as {
+      post: {
+        description: string;
+        parameters: Array<{ name: string; in: string; required?: boolean }>;
+        security: unknown;
+        responses: Record<
+          string,
+          {
+            content: {
+              "application/json": {
+                schema: { properties: Record<string, { required?: string[] }> };
+              };
+            };
+          }
+        >;
+      };
+    };
+    expect(route.post.security).toEqual([{ eventVerificationToken: [] }]);
+    expect(route.post.description).toMatch(/exact original request bytes/i);
+    expect(route.post.parameters).toEqual(
+      expect.arrayContaining([
+        { name: "x-lark-request-timestamp", in: "header", required: false, schema: expect.anything() },
+        { name: "x-lark-request-nonce", in: "header", required: false, schema: expect.anything() },
+        { name: "x-lark-signature", in: "header", required: false, schema: expect.anything() },
+      ]),
+    );
+    const data = route.post.responses["200"]!.content["application/json"].schema.properties.data!;
+    expect(data.required).toEqual(["valid", "appId", "tenantKey", "signatureVerified"]);
   });
 });

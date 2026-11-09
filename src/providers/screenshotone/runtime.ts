@@ -1,11 +1,13 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
-import type { ApiKeyProviderContext, ProviderFetch } from "../provider-runtime.ts";
-import type { ScreenshotoneActionName } from "./actions.ts";
+import type { ProviderActionHandlers } from "../provider-executors.ts";
+import type { ApiKeyProviderContext } from "../provider-executors.ts";
+import type { ProviderFetch } from "../provider-runtime.ts";
 
 import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
+import { storeResponseInTransit } from "../../core/request.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
-const screenshotoneApiBaseUrl = "https://api.screenshotone.com";
+export const screenshotoneApiBaseUrl = "https://api.screenshotone.com";
 const screenshotoneUsagePath = "/usage";
 const screenshotoneDevicesPath = "/devices";
 const screenshotoneBulkPath = "/bulk";
@@ -14,7 +16,7 @@ const screenshotoneAnimatePath = "/animate";
 
 type ScreenshotoneActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
-export const screenshotoneActionHandlers: Record<ScreenshotoneActionName, ScreenshotoneActionHandler> = {
+export const screenshotoneActionHandlers: ProviderActionHandlers<"screenshotone", ScreenshotoneActionHandler> = {
   take_screenshot(input, context) {
     return takeScreenshotoneScreenshot(input, context);
   },
@@ -198,10 +200,15 @@ async function uploadScreenshotoneResponse(
     context,
     kind === "animation" ? "take_animated_screenshot" : "take_screenshot",
   );
-  const bytes = await response.arrayBuffer();
   const mimeType = response.headers.get("content-type") ?? "application/octet-stream";
   const name = buildScreenshotoneTransitFileName(kind, mimeType);
-  const upload = await transitFiles.create(new File([bytes], name, { type: mimeType }));
+  const upload = await storeResponseInTransit(response, transitFiles, {
+    name,
+    mimeType,
+    fieldName: `ScreenshotOne ${kind} output`,
+    createError: (message) => new ProviderRequestError(413, message),
+    signal: context.signal,
+  });
 
   return {
     file: {

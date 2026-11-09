@@ -2,9 +2,10 @@
 
 <img src="../assets/openconnector-readme-banner.png" alt="OpenConnector - Connect Once. Use Everywhere." width="100%" />
 
-[English](../README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [Français](README.fr.md)
+[English](../README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Русский](README.ru.md) | [Français](README.fr.md) | [Español](README.es.md)
 
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](../LICENSE.txt)
+[![License: Modified Apache-2.0](https://img.shields.io/badge/License-Modified%20Apache--2.0-blue.svg)](../LICENSE.txt)
+[![npm](https://img.shields.io/npm/v/@oomol-lab/open-connector.svg)](https://www.npmjs.com/package/@oomol-lab/open-connector)
 ![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933)
 ![Cloudflare compatible](https://img.shields.io/badge/Cloudflare-compatible-F38020)
 ![MCP](https://img.shields.io/badge/MCP-ready-111827)
@@ -15,9 +16,27 @@
 
 </div>
 
-OpenConnector est un connector gateway open source pour AI agents, et une alternative à Composio.
+OpenConnector est un connector gateway open source pour AI agents, et une alternative à Pipedream/Composio.
 Connectez les comptes d'apps utilisateur une fois, puis exposez un catalog partagé de 1,000+
 providers et 10 000+ Actions prêtes à l'emploi aux agents et applications.
+
+<table>
+  <tr>
+    <td width="33.33%" align="center"><img src="../assets/deployment-options/oomol.svg" alt="OOMOL" width="140"></td>
+    <td width="33.33%" align="center"><img src="../assets/deployment-options/self-hosted.svg" alt="Auto-hébergé" width="140"></td>
+    <td width="33.33%" align="center"><img src="../assets/deployment-options/more-platforms.svg" alt="Autres plateformes" width="140"></td>
+  </tr>
+  <tr>
+    <td width="33.33%" valign="top">OAuth géré et runtime hébergé, prêts à l'emploi. Aucun déploiement ni configuration d'app OAuth.</td>
+    <td width="33.33%" valign="top">Exécutez OpenConnector en local ou sur votre infrastructure avec Docker ou Node.js. Vous gérez le stockage et les apps OAuth.</td>
+    <td width="33.33%" valign="top"><strong>Cloudflare</strong>, <strong>Fly.io</strong>, <strong>RepoCloud</strong>, <strong>nibrun</strong>, <strong>NEXUS AI</strong>, <strong>Pethost</strong>, <strong>ZopDay</strong> et plus.</td>
+  </tr>
+  <tr>
+    <td width="33.33%" align="center">🚀 <a href="https://oomol.com/docs/connector-saas/"><strong>OOMOL hébergé</strong></a></td>
+    <td width="33.33%" align="center"><a href="https://oomol.com/docs/openconnector-self-hosting/"><strong>Auto-héberger</strong></a></td>
+    <td width="33.33%" align="center"><a href="deployment-options/README.fr.md"><strong>Autres plateformes</strong></a></td>
+  </tr>
+</table>
 
 Utilisez le [Connector SDK](https://github.com/oomol-lab/connector-sdk) dans le code applicatif,
 [oo CLI](https://github.com/oomol-lab/oo-cli) comme relais pour les agents locaux, MCP pour les
@@ -25,8 +44,7 @@ hosts d'agents, HTTP/OpenAPI pour les clients personnalisés, et la Web Console 
 l'administration et le débogage.
 
 - Gardez credentials, scopes, schemas, policies et run logs dans un runtime inspectable.
-- Exécutez-le en local, sur Fly.io, sur une infrastructure compatible Cloudflare ou via le runtime
-  hébergé d'OOMOL.
+- Exécutez-le en local, sur votre infrastructure ou via le runtime hébergé d'OOMOL.
 - Utilisez les mêmes provider ids, Action ids, schemas et contracts entre les déploiements open
   source et SaaS commercial.
 
@@ -40,8 +58,8 @@ l'administration et le débogage.
   executor source chargé à la demande.
 - Des runtime controls pour la production : connection identity, scopes, runtime tokens, action
   allow/block policies, transit temporaire de fichiers et journaux d'exécution masqués.
-- Des options de déploiement via Docker ou Node.js en local, Fly.io avec stockage SQLite persistant,
-  Cloudflare Workers / D1 / R2 / Static Assets, ou le runtime hébergé d'OOMOL.
+- Des options de déploiement via Docker ou Node.js en local, ou le runtime hébergé d'OOMOL. Les
+  autres plateformes gérées sont listées dans les [options de déploiement](deployment-options/README.fr.md).
 
 ## Où L'utiliser
 
@@ -111,25 +129,18 @@ nécessaires à la run.
 
 ## Parcours D'utilisation
 
-| Parcours                          | Idéal pour                                                          | Inclus                                                                                                                                                                           |
-| --------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Open source self-host             | Développeurs et équipes qui veulent un contrôle total               | Runtime Docker ou Node local, stockage SQLite, MCP, HTTP, OpenAPI et Web Console                                                                                                 |
-| Fly.io self-host                  | Équipes qui veulent un runtime Docker hébergé                       | Runtime Docker Node, stockage SQLite sur un volume Fly, TLS, health checks, MCP, HTTP, OpenAPI et Web Console                                                                    |
-| Déploiement compatible Cloudflare | Équipes qui veulent un runtime hébergé léger                        | Workers runtime, état D1, fichiers de transit R2 et Static Assets pour la console                                                                                                |
-| [OOMOL](https://oomol.com/)       | Équipes bloquées par l'approbation OAuth ou les délais de lancement | Auth hébergée et infrastructure runtime avec les mêmes provider et Action contracts ; compatible avec l'interface open source pour un déploiement privé ou self-hosted ultérieur |
-
-## Vidéo De Démarrage Rapide Cloudflare
-
-[![Déployer OpenConnector sur Cloudflare Workers](../assets/cloudflare-quickstart-video.png)](https://www.youtube.com/watch?v=R0V1ZdCuTgc)
-
-Le
-[guide vidéo de déploiement Cloudflare Workers](https://www.youtube.com/watch?v=R0V1ZdCuTgc)
-montre comment lancer OpenConnector sur Cloudflare avec Workers, D1, R2 et la Web Console. La vidéo
-suit le même flux que [cloudflare.md](cloudflare.md) : créer les ressources Cloudflare, copier
-`wrangler.example.jsonc` vers `wrangler.local.jsonc`, appliquer les migrations D1, définir les
-secrets requis et exécuter `npm run deploy:cloudflare`.
+| Parcours                    | Idéal pour                                                          | Inclus                                                                                                                                                                           |
+| --------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Open source self-host       | Développeurs et équipes qui veulent un contrôle total               | Runtime Docker ou Node local, stockage SQLite, MCP, HTTP, OpenAPI et Web Console                                                                                                 |
+| [OOMOL](https://oomol.com/) | Équipes bloquées par l'approbation OAuth ou les délais de lancement | Auth hébergée et infrastructure runtime avec les mêmes provider et Action contracts ; compatible avec l'interface open source pour un déploiement privé ou self-hosted ultérieur |
 
 ## Démarrage Rapide
+
+> [!NOTE]
+> Ces étapes démarrent un runtime self-hosted. Les providers OAuth nécessitent les OAuth client
+> credentials des apps que vous enregistrez auprès de ces providers. Pour permettre aux
+> utilisateurs d'autoriser les providers pris en charge sans configurer vos propres apps OAuth,
+> utilisez les [connectors hébergés par OOMOL](https://oomol.com/apps).
 
 Démarrez le runtime depuis l'image publiée avec Docker Compose :
 
@@ -185,46 +196,19 @@ providers, configurer les API keys et OAuth clients, créer des runtime tokens, 
 schemas, déboguer les Actions, revoir les exécutions récentes et accéder aux metadata OpenAPI et MCP
 générées.
 
-## Déploiement Cloudflare
-
-OpenConnector peut être déployé sur Cloudflare : Workers exécute le runtime, D1 stocke l'état, R2
-gère les fichiers de transit et Static Assets sert la Web Console.
-
-Consultez [cloudflare.md](cloudflare.md) pour la création des ressources, les migrations, les
-secrets, la preview Worker locale et le déploiement distant.
-
-## Déploiement Fly.io
-
-OpenConnector peut aussi être déployé sur Fly.io avec le runtime Docker Node et un stockage SQLite
-persistant sur un volume Fly.
-
-Consultez [fly-io.md](fly-io.md) pour créer l'app Fly, configurer le volume et les secrets,
-déployer, définir un domaine personnalisé et ajuster le scaling.
-
 ## Image Docker (GHCR)
 
 Exécutez OpenConnector depuis une image préconstruite sur GitHub Packages (GHCR) :
-`ghcr.io/oomol-lab/open-connector`. Utilisez `latest` pour la dernière release, une version épinglée comme
-`v1.0.0` en production, ou `tip` pour le dernier build de `main`.
+`ghcr.io/oomol-lab/open-connector`. Utilisez `latest` pour la dernière release, une version de release
+épinglée en production, ou `tip` pour le dernier build de `main`.
 
 Consultez [docker-ghcr.md (anglais)](docker-ghcr.md) pour les tags d'image, le pull et l'exécution.
 
-## Vous voulez l'utiliser directement ?
+## Un bot IA prêt à l’emploi avec Leina
 
-Les parcours ci-dessus s'adressent aux équipes qui intègrent le connector dans leurs produits,
-runtimes ou infrastructures d'entreprise. Si vous voulez d'abord essayer l'expérience de connexion
-SaaS, ou l'utiliser directement dans le travail quotidien, vous n'avez pas besoin de déployer
-OpenConnector ni d'intégrer d'abord le SDK, la CLI, MCP ou l'API HTTP.
+Si vous cherchez un bot IA prêt à l’emploi, essayez [Leina](https://leina.ai/). Leina se connecte à plus de 1 500 applications SaaS et vous permet de personnaliser votre propre agent IA en combinant connexions aux applications, compétences et base de connaissances selon les méthodes de travail de votre équipe.
 
-[Wanta](https://wanta.ai/) est le point d'entrée desktop product qui utilise la même couverture
-1,000+ SaaS/providers. Après avoir connecté des comptes, vous pouvez chercher, organiser, créer et
-synchroniser dans les outils connectés en natural language.
-
-| Si Vous Voulez                                       | Wanta Fournit                                                                                                                       |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Essayer directement les connexions 1,000+ SaaS       | Utiliser la même couverture SaaS/provider sans déployer un runtime ni intégrer d'abord le SDK/la CLI.                               |
-| Utiliser des Agents dans le travail quotidien        | Travailler en natural language à travers email, chat, docs, data, projets, support, developer tools et marketing tools.             |
-| Partager des capabilities connectées avec une équipe | Configurer connections et access scopes une fois ; les teammates les utilisent sans setup, avec keys, tokens et credentials cachés. |
+Utilisez-le dans Slack, Microsoft Teams, Discord ou Telegram pour rechercher des informations, préparer des rapports hebdomadaires, organiser les retours clients et préparer le suivi commercial via les applications que vous autorisez.
 
 ## Documentation
 
@@ -232,6 +216,7 @@ synchroniser dans les outils connectés en natural language.
 - [Outils développeur](sdk-cli.md)
 - [Tutoriel Gmail OAuth et SDK (anglais)](gmail-oauth-sdk.md)
 - [Runtime API et MCP](runtime-api.md)
+- [Options de déploiement](deployment-options/README.fr.md)
 - [Déploiement Fly.io](fly-io.md)
 - [Déploiement Cloudflare](cloudflare.md)
 - [Image Docker (GHCR) (anglais)](docker-ghcr.md)
@@ -269,10 +254,16 @@ providers.
 ## Portée De La Licence
 
 Sauf indication contraire, le code source, les scripts, les échafaudages de projet générés, les
-tests et la documentation rédigés pour ce repository sont sous Apache License, Version 2.0. Consultez
-[LICENSE.txt](../LICENSE.txt).
+tests et la documentation rédigés pour ce repository sont sous OpenConnector License, une version
+modifiée de l'Apache License 2.0. Consultez [LICENSE.txt](../LICENSE.txt).
 
-La licence Apache-2.0 de ce repository n'accorde aucun droit sur les produits, providers, apps,
+Vous pouvez utiliser, modifier et auto-héberger OpenConnector pour tout usage, y compris un usage
+commercial et son intégration dans vos propres produits. La seule condition ajoutée est que fournir
+OpenConnector à des tiers comme service de connecteurs hébergé nécessite une licence commerciale
+d'OOMOL. Les versions jusqu'à v1.9.4 incluse restent sous l'Apache License 2.0 non modifiée.
+Consultez [NOTICE.md](../NOTICE.md).
+
+La licence de ce repository n'accorde aucun droit sur les produits, providers, apps,
 APIs, trademarks, service marks, trade names, logos, icons, brand assets, documentation,
 screenshots ou autres contenus protégés appartenant à leurs détenteurs respectifs.
 
@@ -290,3 +281,27 @@ copier des fichiers de marque dans ce repository.
 
 Gardez les issues et pull requests ciblées, respectueuses et actionnables. La participation à ce
 projet est régie par [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md).
+
+## Soutenir OpenConnector
+
+Si OpenConnector vous est utile, attribuez-lui une ⭐ pour aider davantage de développeurs à découvrir le projet.
+
+<div align="center">
+
+<img src="../assets/star-open-connector.gif" alt="Comment attribuer une Star à OpenConnector sur GitHub" width="760" />
+
+</div>
+
+## Contributeurs
+
+Merci à toutes les personnes qui ont contribué à OpenConnector. Vous souhaitez les rejoindre ?
+Consultez le [guide de contribution](../CONTRIBUTING.md).
+
+[![Contributeurs OpenConnector](https://contrib.rocks/image?repo=oomol-lab/open-connector)](https://github.com/oomol-lab/open-connector/graphs/contributors)
+
+## Historique des Stars
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/star-history/star-history-dark.svg">
+  <img alt="Historique des Stars" src="../assets/star-history/star-history-light.svg">
+</picture>

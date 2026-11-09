@@ -1,4 +1,4 @@
-import type { PolicyRules, TokenActionPolicy } from "../../core/action-policy.ts";
+import type { PolicyRules, TokenPolicy } from "../../core/action-policy.ts";
 import type { JsonRequestBody } from "./http-utils.ts";
 
 import { Buffer } from "node:buffer";
@@ -15,19 +15,29 @@ export function readRuntimePolicyRules(body: JsonRequestBody): PolicyRules {
     blockedActions: readRules(body.blockedActions, "blockedActions", "action"),
     allowedProxies: readRules(body.allowedProxies, "allowedProxies", "proxy"),
     blockedProxies: readRules(body.blockedProxies, "blockedProxies", "proxy"),
+    allowedTriggers: readRules(body.allowedTriggers, "allowedTriggers", "action", true),
+    blockedTriggers: readRules(body.blockedTriggers, "blockedTriggers", "action", true),
   };
 }
 
-export function readTokenActionPolicy(body: JsonRequestBody, allowOmitted = false): TokenActionPolicy {
-  if (body.allowedProxies !== undefined || body.blockedProxies !== undefined) {
-    throw invalidInput("Token policy does not support proxy rules.");
+export function readTokenPolicy(body: JsonRequestBody, allowOmitted = false): TokenPolicy {
+  if (body.blockedTriggers !== undefined) {
+    throw invalidInput("Token policy does not support Trigger block rules.");
   }
-  return {
+  if (body.blockedProxies !== undefined) {
+    throw invalidInput("Token policy does not support proxy block rules.");
+  }
+  const policy: TokenPolicy = {
     allowedActions: readRules(body.allowedActions, "allowedActions", "action", allowOmitted),
     blockedActions: readRules(body.blockedActions, "blockedActions", "action", allowOmitted),
+    allowedProxies: readRules(body.allowedProxies, "allowedProxies", "proxy", allowOmitted),
+    allowedTriggers: readRules(body.allowedTriggers, "allowedTriggers", "action", true),
     allowedConnections: readAllowedConnections(body.allowedConnections, allowOmitted),
-    actionInputConstraints: readActionInputConstraints(body.actionInputConstraints, allowOmitted),
   };
+  if (body.actionInputConstraints !== undefined) {
+    policy.actionInputConstraints = readActionInputConstraints(body.actionInputConstraints, false);
+  }
+  return policy;
 }
 
 function readActionInputConstraints(
@@ -78,10 +88,7 @@ function readActionInputConstraints(
                 `actionInputConstraints.${normalizedRule}.${normalizedField} must be a finite number.`,
               );
             }
-            if (
-              typeof expected === "string" &&
-              Buffer.byteLength(expected, "utf8") > policyRuleMaxBytes
-            ) {
+            if (typeof expected === "string" && Buffer.byteLength(expected, "utf8") > policyRuleMaxBytes) {
               throw invalidInput(
                 `actionInputConstraints.${normalizedRule}.${normalizedField} must not exceed ${policyRuleMaxBytes} UTF-8 bytes.`,
               );
@@ -94,10 +101,17 @@ function readActionInputConstraints(
   );
 }
 
-function readAllowedConnections(value: unknown, allowOmitted: boolean): Record<string, string | null> | undefined {
-  if (value === undefined) return allowOmitted ? {} : undefined;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw invalidInput("allowedConnections must be an object keyed by service.");
+function readAllowedConnections(
+  value: unknown,
+  allowOmitted: boolean,
+): string[] | Record<string, string | null> | undefined {
+  if (value === undefined) {
+    if (allowOmitted) return [];
+    throw invalidInput("allowedConnections must be an array of strings or an object keyed by service.");
+  }
+  if (Array.isArray(value)) return readConnectionIds(value, "allowedConnections", false);
+  if (!value || typeof value !== "object") {
+    throw invalidInput("allowedConnections must be an array of IDs or an object keyed by service.");
   }
   const entries = Object.entries(value);
   if (entries.length > policyRuleListMaxItems) {
@@ -151,6 +165,32 @@ function readRules(value: unknown, fieldName: string, kind: "action" | "proxy", 
     throw invalidInput(`${fieldName} must not contain more than ${policyRuleListMaxItems} rules.`);
   }
   return rules;
+}
+
+function readConnectionIds(value: unknown, fieldName: string, allowOmitted = false): string[] {
+  if (value === undefined && allowOmitted) {
+    return [];
+  }
+  const values = requiredStringArray(value, fieldName, invalidInput);
+  const connectionIds: string[] = [];
+  const seen = new Set<string>();
+  for (const item of values) {
+    const connectionId = item.trim();
+    if (!connectionId) {
+      throw invalidInput(`${fieldName} must not contain empty connection IDs.`);
+    }
+    if (Buffer.byteLength(connectionId, "utf8") > policyRuleMaxBytes) {
+      throw invalidInput(`${fieldName} IDs must not exceed ${policyRuleMaxBytes} UTF-8 bytes.`);
+    }
+    if (!seen.has(connectionId)) {
+      seen.add(connectionId);
+      connectionIds.push(connectionId);
+    }
+  }
+  if (connectionIds.length > policyRuleListMaxItems) {
+    throw invalidInput(`${fieldName} must not contain more than ${policyRuleListMaxItems} rules.`);
+  }
+  return connectionIds;
 }
 
 function assertRuleSyntax(rule: string, fieldName: string, kind: "action" | "proxy"): void {

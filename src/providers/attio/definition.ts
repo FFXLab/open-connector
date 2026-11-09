@@ -8,8 +8,20 @@ export const provider: ProviderDefinition = {
   service,
   displayName: "Attio",
   categories: ["Productivity", "Data"],
-  authTypes: ["api_key"],
+  authTypes: ["oauth2", "api_key"],
   auth: [
+    {
+      type: "oauth2",
+      authorizationUrl: "https://app.attio.com/authorize",
+      tokenUrl: "https://app.attio.com/oauth/token",
+      scopes: [],
+      pkce: { method: "S256" },
+      authorizationParams: { token_level: "workspace" },
+      tokenEndpointAuthMethod: "client_secret_post",
+      authorizationRequestFields: {
+        scope: false,
+      },
+    },
     {
       type: "api_key",
       label: "Access Token",
